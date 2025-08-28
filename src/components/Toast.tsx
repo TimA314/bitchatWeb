@@ -51,7 +51,7 @@ export const Toast: React.FC<ToastProps> = ({
   };
 
   const getToastClasses = () => {
-    const baseClasses = 'fixed top-6 right-6 z-50 min-w-[320px] max-w-[500px] p-5 rounded-2xl shadow-2xl backdrop-blur-xl animate-slide-in border transition-all duration-300';
+    const baseClasses = 'fixed top-4 lg:top-6 right-4 lg:right-6 left-4 lg:left-auto z-50 lg:min-w-[320px] lg:max-w-[500px] p-4 lg:p-5 rounded-2xl shadow-2xl backdrop-blur-xl animate-slide-in border transition-all duration-300';
     
     switch (type) {
       case 'warning':
@@ -68,19 +68,19 @@ export const Toast: React.FC<ToastProps> = ({
   };
 
   return (
-    <div className={`${getToastClasses()} lg:right-6 lg:left-auto left-6 lg:min-w-[320px] min-w-auto lg:max-w-[500px] max-w-none`}>
-      <div className="flex items-start space-x-4">
-        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-lg">
+    <div className={getToastClasses()}>
+      <div className="flex items-start space-x-3 lg:space-x-4">
+        <div className="flex-shrink-0 w-6 h-6 lg:w-8 lg:h-8 rounded-full bg-white/20 flex items-center justify-center text-base lg:text-lg">
           {getIcon()}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-sm leading-relaxed whitespace-pre-line">{message}</div>
+          <div className="font-semibold text-xs lg:text-sm leading-relaxed whitespace-pre-line">{message}</div>
           {actions && actions.length > 0 && (
-            <ActionButtons actions={actions} className="mt-3" />
+            <ActionButtons actions={actions} className="mt-2 lg:mt-3" />
           )}
         </div>
         <button 
-          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors text-lg font-bold"
+          className="flex-shrink-0 w-6 h-6 lg:w-8 lg:h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors text-base lg:text-lg font-bold"
           onClick={onClose}
           aria-label="Close notification"
         >

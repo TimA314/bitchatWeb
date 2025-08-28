@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { ChatWindow } from './components/ChatWindow'
 import { UserProfile } from './components/UserProfile'
+import { MobileNav } from './components/MobileNav'
 import { Toast } from './components/Toast'
 import { checkBluetoothCompatibility } from './utils/bluetooth'
 
@@ -106,14 +107,12 @@ function App() {
       
       {/* Mobile Layout */}
       <div className="flex flex-col h-screen lg:hidden">
-        <div className="bg-gray-800/80 backdrop-blur-sm border-b border-gray-700 p-4 shadow-lg">
-          <UserProfile 
-            username={username} 
-            onUsernameChange={handleUsernameChange}
-            onBluetoothMessage={handleBluetoothMessage}
-            messageCount={messages.length}
-          />
-        </div>
+        <MobileNav 
+          username={username} 
+          onUsernameChange={handleUsernameChange}
+          onBluetoothMessage={handleBluetoothMessage}
+          messageCount={messages.length}
+        />
         <div className="flex-1 bg-gray-800">
           <ChatWindow 
             messages={messages}

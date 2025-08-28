@@ -31,14 +31,14 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({ actions, className
   };
 
   return (
-    <div className={`flex flex-col space-y-2 mt-3 ${className}`}>
+    <div className={`flex flex-col space-y-1.5 lg:space-y-2 mt-2 lg:mt-3 ${className}`}>
       {actions.map((action, index) => (
         <button
           key={index}
           onClick={() => handleActionClick(action.url)}
-          className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-sm font-medium rounded-lg transition-all duration-200 border border-white/20 hover:border-white/30 flex items-center justify-center space-x-2"
+          className="px-3 lg:px-4 py-1.5 lg:py-2 bg-white/10 hover:bg-white/20 text-white text-xs lg:text-sm font-medium rounded-lg transition-all duration-200 border border-white/20 hover:border-white/30 flex items-center justify-center space-x-2"
         >
-          <span>{action.label}</span>
+          <span className="truncate">{action.label}</span>
         </button>
       ))}
     </div>
