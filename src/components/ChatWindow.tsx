@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import './ChatWindow.css';
 
 interface Message {
   id: string;
@@ -47,51 +46,76 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   };
 
   return (
-    <div className="chat-window">
-      <div className="chat-header">
-        <h2>BitChat</h2>
-        <div className="status">
-          <span className="status-indicator online"></span>
-          Online
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex justify-between items-center p-6 bg-gradient-to-r from-primary-600 to-primary-700 border-b border-gray-700/50">
+        <div className="flex items-center space-x-3">
+          <div className="w-8 h-8 bg-primary-400 rounded-full flex items-center justify-center">
+            <span className="text-white font-bold text-sm">BC</span>
+          </div>
+          <h2 className="text-xl font-bold text-white">BitChat</h2>
+        </div>
+        <div className="flex items-center space-x-2 text-sm text-primary-100">
+          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+          <span className="font-medium">Online</span>
         </div>
       </div>
       
-      <div className="messages-container">
+      {/* Messages */}
+      <div className="flex-1 p-6 overflow-y-auto bg-gradient-to-b from-gray-800/50 to-gray-900/50 space-y-6">
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`message ${message.sender === 'user' ? 'sent' : 'received'}`}
+            className={`flex max-w-[80%] ${message.sender === 'user' ? 'self-end' : 'self-start'} animate-fade-in`}
           >
-            <div className="message-content">
-              <div className="message-header">
-                <span className="sender-name">{message.senderName}</span>
-                <span className="timestamp">
+            <div className={`group relative rounded-2xl p-4 shadow-lg backdrop-blur-sm transition-all duration-200 hover:shadow-xl ${
+              message.sender === 'user' 
+                ? 'bg-gradient-to-br from-primary-500 to-primary-600 text-white ml-auto' 
+                : 'bg-gray-700/80 border border-gray-600/50 text-gray-100'
+            }`}>
+              <div className="flex justify-between items-center mb-2 text-xs opacity-80">
+                <span className="font-semibold">{message.senderName}</span>
+                <span className="text-xs">
                   {message.timestamp.toLocaleTimeString([], { 
                     hour: '2-digit', 
                     minute: '2-digit' 
                   })}
                 </span>
               </div>
-              <div className="message-text">{message.text}</div>
+              <div className="leading-relaxed break-words">{message.text}</div>
+              
+              {/* Message tail */}
+              <div className={`absolute top-4 ${
+                message.sender === 'user' 
+                  ? '-right-1 w-0 h-0 border-l-[6px] border-l-primary-500 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent' 
+                  : '-left-1 w-0 h-0 border-r-[6px] border-r-gray-700 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent'
+              }`}></div>
             </div>
           </div>
         ))}
         <div ref={messagesEndRef} />
       </div>
 
-      <form className="message-input-form" onSubmit={handleSubmit}>
-        <div className="input-container">
-          <textarea
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Type a message..."
-            className="message-input"
-            rows={1}
-          />
+      {/* Message Input */}
+      <form className="p-6 bg-gray-800/60 backdrop-blur-sm border-t border-gray-700/50" onSubmit={handleSubmit}>
+        <div className="flex space-x-4 items-end">
+          <div className="flex-1 relative">
+            <textarea
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Type your message..."
+              className="w-full p-4 bg-gray-700/60 border border-gray-600/50 rounded-2xl resize-none outline-none transition-all duration-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:bg-gray-700/80 text-white placeholder-gray-400 min-h-[56px] max-h-[120px]"
+              rows={1}
+            />
+          </div>
           <button
             type="submit"
-            className="send-button"
+            className={`px-6 py-4 rounded-2xl font-semibold transition-all duration-200 min-h-[56px] ${
+              inputText.trim()
+                ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 hover:shadow-lg hover:scale-105 active:scale-95'
+                : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
+            }`}
             disabled={!inputText.trim()}
           >
             Send

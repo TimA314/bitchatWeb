@@ -3,7 +3,6 @@ import { ChatWindow } from './components/ChatWindow'
 import { UserProfile } from './components/UserProfile'
 import { Toast } from './components/Toast'
 import { checkBluetoothCompatibility } from './utils/bluetooth'
-import './App.css'
 
 interface Message {
   id: string;
@@ -84,7 +83,7 @@ function App() {
   };
 
   return (
-    <div className="app">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white">
       <Toast
         message={toastMessage}
         type={toastType}
@@ -92,15 +91,37 @@ function App() {
         onClose={handleCloseToast}
         duration={7000}
       />
-      <div className="app-container">
-        <div className="sidebar">
+      
+      {/* Mobile Layout */}
+      <div className="flex flex-col h-screen lg:hidden">
+        <div className="bg-gray-800/80 backdrop-blur-sm border-b border-gray-700 p-4 shadow-lg">
           <UserProfile 
             username={username} 
             onUsernameChange={handleUsernameChange}
             onBluetoothMessage={handleBluetoothMessage}
+            messageCount={messages.length}
           />
         </div>
-        <div className="main-content">
+        <div className="flex-1 bg-gray-800">
+          <ChatWindow 
+            messages={messages}
+            onSendMessage={handleSendMessage}
+            currentUser={username}
+          />
+        </div>
+      </div>
+
+      {/* Desktop Layout */}
+      <div className="hidden lg:flex h-screen p-6 gap-6 max-w-7xl mx-auto">
+        <div className="w-80 bg-gray-800/60 backdrop-blur-xl border border-gray-700/50 rounded-2xl p-6 shadow-2xl">
+          <UserProfile 
+            username={username} 
+            onUsernameChange={handleUsernameChange}
+            onBluetoothMessage={handleBluetoothMessage}
+            messageCount={messages.length}
+          />
+        </div>
+        <div className="flex-1 bg-gray-800/60 backdrop-blur-xl border border-gray-700/50 rounded-2xl overflow-hidden shadow-2xl">
           <ChatWindow 
             messages={messages}
             onSendMessage={handleSendMessage}
