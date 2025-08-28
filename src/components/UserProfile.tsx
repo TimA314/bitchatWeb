@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
-import { requestBluetoothPermission, checkBluetoothCompatibility } from '../utils/bluetooth';
+import React, { useState, useEffect } from 'react';
+import { requestBluetoothPermission, checkBluetoothCompatibility, promptBraveBluetoothSetup, getBrowserInfo, isBluetoothReady } from '../utils/bluetooth';
 
 interface UserProfileProps {
   username: string;
   onUsernameChange: (newUsername: string) => void;
-  onBluetoothMessage?: (message: string, type: 'warning' | 'error' | 'success' | 'info') => void;
+  onBluetoothMessage?: (message: string, type: 'warning' | 'error' | 'success' | 'info', actions?: Array<{ label: string; url: string }>) => void;
   messageCount?: number;
 }
 
@@ -17,6 +17,22 @@ export const UserProfile: React.FC<UserProfileProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editUsername, setEditUsername] = useState(username);
   const [isTestingBluetooth, setIsTestingBluetooth] = useState(false);
+  const [bluetoothReady, setBluetoothReady] = useState<boolean | null>(null);
+
+  // Check Bluetooth readiness on component mount
+  useEffect(() => {
+    const checkBluetoothReadiness = async () => {
+      const ready = await isBluetoothReady();
+      setBluetoothReady(ready);
+    };
+    
+    checkBluetoothReadiness();
+    
+    // Re-check every 30 seconds in case user enables it
+    const interval = setInterval(checkBluetoothReadiness, 30000);
+    
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSave = () => {
     if (editUsername.trim() && editUsername !== username) {
@@ -33,18 +49,49 @@ export const UserProfile: React.FC<UserProfileProps> = ({
   const handleBluetoothTest = async () => {
     setIsTestingBluetooth(true);
     
-    const compatibility = checkBluetoothCompatibility();
+    // Check if we're in Brave browser and need special handling
+    const browserInfo = getBrowserInfo();
+    if (browserInfo.isBrave) {
+      // First, run Brave-specific setup check
+      const braveSetup = await promptBraveBluetoothSetup();
+      if (!braveSetup.success) {
+        onBluetoothMessage?.(braveSetup.message, braveSetup.requiresManualSetup ? 'warning' : 'error');
+        setIsTestingBluetooth(false);
+        return;
+      } else {
+        // Show Brave preparation message
+        onBluetoothMessage?.(braveSetup.message, 'info');
+        // Continue with permission request after showing info
+      }
+    }
+    
+    const compatibility = await checkBluetoothCompatibility();
     if (!compatibility.isSupported) {
       onBluetoothMessage?.(compatibility.message, 'warning');
       setIsTestingBluetooth(false);
       return;
     }
 
+    // Show initial compatibility message if permission is needed (for non-Brave)
+    if (compatibility.needsPermission && !browserInfo.isBrave) {
+      onBluetoothMessage?.(compatibility.message, 'info');
+    }
+
     try {
       const result = await requestBluetoothPermission();
       onBluetoothMessage?.(result.message, result.success ? 'success' : 'error');
+      
+      // If successful and we have device info, log it
+      if (result.success && result.deviceInfo) {
+        console.log('Connected to Bluetooth device:', result.deviceInfo);
+      }
     } catch (error) {
-      onBluetoothMessage?.('Failed to test Bluetooth connectivity', 'error');
+      console.error('Bluetooth test error:', error);
+      if (browserInfo.isBrave) {
+        onBluetoothMessage?.('🦁 Bluetooth permission failed in Brave. Make sure Web Bluetooth API is enabled in brave://settings/privacy and try again.', 'error');
+      } else {
+        onBluetoothMessage?.('Failed to test Bluetooth connectivity', 'error');
+      }
     } finally {
       setIsTestingBluetooth(false);
     }
@@ -113,35 +160,121 @@ export const UserProfile: React.FC<UserProfileProps> = ({
             <span className="text-blue-400 text-lg">📶</span>
           </div>
           <h4 className="text-lg font-semibold text-white">Bluetooth</h4>
+          {bluetoothReady === true && (
+            <div className="ml-auto">
+              <div className="flex items-center space-x-2 px-3 py-1 bg-green-500/20 rounded-full border border-green-500/30">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                <span className="text-green-400 text-xs font-medium">Ready</span>
+              </div>
+            </div>
+          )}
         </div>
         
-        <button
-          onClick={handleBluetoothTest}
-          disabled={isTestingBluetooth}
-          className={`w-full p-4 rounded-xl font-medium text-sm transition-all duration-300 border ${
-            isTestingBluetooth
-              ? 'bg-gray-600/50 text-gray-400 cursor-not-allowed border-gray-600/50'
-              : 'bg-gradient-to-r from-blue-500/80 to-purple-500/80 hover:from-blue-500 hover:to-purple-500 text-white border-blue-500/50 hover:border-blue-400 hover:shadow-lg hover:shadow-blue-500/25 hover:-translate-y-0.5 active:scale-95'
-          }`}
-        >
-          <div className="flex items-center justify-center space-x-2">
-            {isTestingBluetooth ? (
-              <>
-                <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                <span>Testing Connection...</span>
-              </>
-            ) : (
-              <>
-                <span>🔍</span>
-                <span>Test Bluetooth</span>
-              </>
-            )}
+        {bluetoothReady === true ? (
+          /* Show connection status when Bluetooth is ready */
+          <div className="text-center py-6">
+            <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-blue-500/20 to-green-500/20 rounded-full flex items-center justify-center border border-blue-500/30">
+              <span className="text-3xl">📡</span>
+            </div>
+            <h5 className="text-lg font-semibold text-white mb-2">Bluetooth Connected</h5>
+            <p className="text-sm text-gray-400 mb-4">
+              Web Bluetooth API is enabled and ready for device connections.
+            </p>
+            <button
+              onClick={handleBluetoothTest}
+              disabled={isTestingBluetooth}
+              className={`px-6 py-2 rounded-lg font-medium text-sm transition-all duration-300 border ${
+                isTestingBluetooth
+                  ? 'bg-gray-600/50 text-gray-400 cursor-not-allowed border-gray-600/50'
+                  : 'bg-gradient-to-r from-blue-500/80 to-purple-500/80 hover:from-blue-500 hover:to-purple-500 text-white border-blue-500/50 hover:border-blue-400 hover:shadow-lg hover:shadow-blue-500/25 hover:-translate-y-0.5 active:scale-95'
+              }`}
+            >
+              <div className="flex items-center justify-center space-x-2">
+                {isTestingBluetooth ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Testing...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>🔍</span>
+                    <span>Find Devices</span>
+                  </>
+                )}
+              </div>
+            </button>
           </div>
-        </button>
-        
-        <p className="text-xs text-gray-400 text-center leading-relaxed mt-3">
-          Check device compatibility for enhanced features and connectivity options.
-        </p>
+        ) : bluetoothReady === false ? (
+          /* Show setup options when Bluetooth is not ready */
+          <div>
+            {/* Show Brave-specific setup button if in Brave */}
+            {getBrowserInfo().isBrave && (
+              <div className="mb-3">
+                <button
+                  onClick={async () => {
+                    const setup = await promptBraveBluetoothSetup();
+                    onBluetoothMessage?.(setup.message, setup.requiresManualSetup ? 'warning' : setup.success ? 'info' : 'error', setup.actions);
+                    // Re-check Bluetooth readiness after setup attempt
+                    setTimeout(async () => {
+                      const ready = await isBluetoothReady();
+                      setBluetoothReady(ready);
+                    }, 1000);
+                  }}
+                  className="w-full p-3 rounded-xl font-medium text-sm transition-all duration-300 border bg-gradient-to-r from-orange-500/80 to-amber-500/80 hover:from-orange-500 hover:to-amber-500 text-white border-orange-500/50 hover:border-orange-400 hover:shadow-lg hover:shadow-orange-500/25 hover:-translate-y-0.5 active:scale-95"
+                >
+                  <div className="flex items-center justify-center space-x-2">
+                    <span>🦁</span>
+                    <span>Setup Bluetooth for Brave</span>
+                  </div>
+                </button>
+                <p className="text-xs text-amber-300/80 text-center leading-relaxed mt-2">
+                  Brave requires manual setup. Click to get step-by-step instructions.
+                </p>
+              </div>
+            )}
+            
+            <button
+              onClick={async () => {
+                await handleBluetoothTest();
+                // Re-check Bluetooth readiness after test
+                setTimeout(async () => {
+                  const ready = await isBluetoothReady();
+                  setBluetoothReady(ready);
+                }, 1000);
+              }}
+              disabled={isTestingBluetooth}
+              className={`w-full p-4 rounded-xl font-medium text-sm transition-all duration-300 border ${
+                isTestingBluetooth
+                  ? 'bg-gray-600/50 text-gray-400 cursor-not-allowed border-gray-600/50'
+                  : 'bg-gradient-to-r from-blue-500/80 to-purple-500/80 hover:from-blue-500 hover:to-purple-500 text-white border-blue-500/50 hover:border-blue-400 hover:shadow-lg hover:shadow-blue-500/25 hover:-translate-y-0.5 active:scale-95'
+              }`}
+            >
+              <div className="flex items-center justify-center space-x-2">
+                {isTestingBluetooth ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Testing Connection...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>🔍</span>
+                    <span>Test Bluetooth</span>
+                  </>
+                )}
+              </div>
+            </button>
+            
+            <p className="text-xs text-gray-400 text-center leading-relaxed mt-3">
+              Check device compatibility for enhanced features and connectivity options.
+            </p>
+          </div>
+        ) : (
+          /* Show loading state while checking */
+          <div className="text-center py-6">
+            <div className="w-8 h-8 mx-auto mb-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-sm text-gray-400">Checking Bluetooth availability...</p>
+          </div>
+        )}
       </div>
 
       {/* Stats Section */}

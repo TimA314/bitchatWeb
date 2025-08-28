@@ -1,4 +1,10 @@
 import React, { useEffect } from 'react';
+import { ActionButtons } from './ActionButtons';
+
+interface ActionButton {
+  label: string;
+  url: string;
+}
 
 interface ToastProps {
   message: string;
@@ -6,6 +12,7 @@ interface ToastProps {
   isVisible: boolean;
   onClose: () => void;
   duration?: number;
+  actions?: ActionButton[];
 }
 
 export const Toast: React.FC<ToastProps> = ({
@@ -13,7 +20,8 @@ export const Toast: React.FC<ToastProps> = ({
   type,
   isVisible,
   onClose,
-  duration = 5000
+  duration = 200000,
+  actions
 }) => {
   useEffect(() => {
     if (isVisible) {
@@ -66,7 +74,10 @@ export const Toast: React.FC<ToastProps> = ({
           {getIcon()}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-sm leading-relaxed">{message}</p>
+          <div className="font-semibold text-sm leading-relaxed whitespace-pre-line">{message}</div>
+          {actions && actions.length > 0 && (
+            <ActionButtons actions={actions} className="mt-3" />
+          )}
         </div>
         <button 
           className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors text-lg font-bold"

@@ -26,6 +26,7 @@ function App() {
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<'warning' | 'error' | 'success' | 'info'>('info');
+  const [toastActions, setToastActions] = useState<Array<{ label: string; url: string }>>([]);
 
   // Load username from localStorage on component mount
   useEffect(() => {
@@ -35,12 +36,20 @@ function App() {
     }
     
     // Check Bluetooth compatibility on app load
-    const bluetoothCheck = checkBluetoothCompatibility();
-    if (!bluetoothCheck.isSupported) {
-      setToastMessage(bluetoothCheck.message);
-      setToastType('warning');
-      setToastVisible(true);
-    }
+    const checkBluetooth = async () => {
+      try {
+        const bluetoothCheck = await checkBluetoothCompatibility();
+        if (!bluetoothCheck.isSupported) {
+          setToastMessage(bluetoothCheck.message);
+          setToastType('warning');
+          setToastVisible(true);
+        }
+      } catch (error) {
+        console.error('Failed to check Bluetooth compatibility:', error);
+      }
+    };
+    
+    checkBluetooth();
   }, []);
 
   const handleSendMessage = (text: string) => {
@@ -74,11 +83,13 @@ function App() {
 
   const handleCloseToast = () => {
     setToastVisible(false);
+    setToastActions([]);
   };
 
-  const handleBluetoothMessage = (message: string, type: 'warning' | 'error' | 'success' | 'info') => {
+  const handleBluetoothMessage = (message: string, type: 'warning' | 'error' | 'success' | 'info', actions?: Array<{ label: string; url: string }>) => {
     setToastMessage(message);
     setToastType(type);
+    setToastActions(actions || []);
     setToastVisible(true);
   };
 
@@ -90,6 +101,7 @@ function App() {
         isVisible={toastVisible}
         onClose={handleCloseToast}
         duration={7000}
+        actions={toastActions}
       />
       
       {/* Mobile Layout */}
