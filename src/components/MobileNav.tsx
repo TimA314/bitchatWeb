@@ -1,18 +1,24 @@
 import React, { useState } from 'react';
 import { UserProfile } from './UserProfile';
+import { MeshNetworkPanel } from './MeshNetworkPanel';
+import type { MeshNetwork } from '../utils/mesh';
 
 interface MobileNavProps {
   username: string;
   onUsernameChange: (newUsername: string) => void;
   onBluetoothMessage?: (message: string, type: 'warning' | 'error' | 'success' | 'info', actions?: Array<{ label: string; url: string }>) => void;
   messageCount?: number;
+  onMeshMessage?: (message: string, from: string) => void;
+  onMeshStatusChange?: (status: string, network?: MeshNetwork) => void;
 }
 
 export const MobileNav: React.FC<MobileNavProps> = ({
   username,
   onUsernameChange,
   onBluetoothMessage,
-  messageCount = 0
+  messageCount = 0,
+  onMeshMessage,
+  onMeshStatusChange
 }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
@@ -85,6 +91,14 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             onBluetoothMessage={onBluetoothMessage}
             messageCount={messageCount}
           />
+          
+          {/* Mesh Network Panel */}
+          <div className="mt-6 pt-6 border-t border-gray-700">
+            <MeshNetworkPanel 
+              onMeshMessage={onMeshMessage}
+              onStatusChange={onMeshStatusChange}
+            />
+          </div>
           
           {/* Additional mobile menu items */}
           <div className="mt-6 pt-6 border-t border-gray-700">

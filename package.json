@@ -10,8 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "noise-protocol": "^3.0.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "tweetnacl": "^1.0.3",
     "vite-plugin-pwa": "^1.0.3",
     "workbox-window": "^7.3.0"
   },

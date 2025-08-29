@@ -3,7 +3,10 @@ import { ChatWindow } from './components/ChatWindow'
 import { UserProfile } from './components/UserProfile'
 import { MobileNav } from './components/MobileNav'
 import { Toast } from './components/Toast'
+import { MeshNetworkPanel } from './components/MeshNetworkPanel'
 import { checkBluetoothCompatibility } from './utils/bluetooth'
+import type { MeshNetwork } from './utils/mesh'
+import { ScanModal } from './components/ScanModal'
 
 interface Message {
   id: string;
@@ -94,6 +97,40 @@ function App() {
     setToastVisible(true);
   };
 
+  const handleMeshMessage = (message: string, from: string) => {
+    const meshMessage: Message = {
+      id: Date.now().toString(),
+      text: message,
+      timestamp: new Date(),
+      sender: 'other',
+      senderName: from
+    };
+    setMessages(prev => [...prev, meshMessage]);
+  };
+
+  const handleMeshStatusChange = (status: string, network?: MeshNetwork) => {
+    if (status === 'connected' && network) {
+      handleBluetoothMessage(`Connected to mesh network: ${network.name}`, 'success');
+    } else if (status === 'disconnected') {
+      handleBluetoothMessage('Disconnected from mesh network', 'info');
+    }
+  };
+
+  const handleChannelJoin = (channelId: string, channelName: string) => {
+    console.log(`Joined BitChat channel: ${channelName} (${channelId})`);
+    handleBluetoothMessage(`Joined channel: ${channelName}`, 'success');
+    
+    // Add system message about channel join
+    const channelMessage: Message = {
+      id: Date.now().toString(),
+      text: `📢 Joined BitChat channel: ${channelName}`,
+      timestamp: new Date(),
+      sender: 'other',
+      senderName: 'BitChat System'
+    };
+    setMessages(prev => [...prev, channelMessage]);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white">
       <Toast
@@ -112,6 +149,8 @@ function App() {
           onUsernameChange={handleUsernameChange}
           onBluetoothMessage={handleBluetoothMessage}
           messageCount={messages.length}
+          onMeshMessage={handleMeshMessage}
+          onMeshStatusChange={handleMeshStatusChange}
         />
         <div className="flex-1 bg-gray-800">
           <ChatWindow 
@@ -123,7 +162,7 @@ function App() {
       </div>
 
       {/* Desktop Layout */}
-      <div className="hidden lg:flex h-screen p-6 gap-6 max-w-7xl mx-auto">
+      <div className="hidden lg:flex h-screen p-6 gap-6 mx-auto">
         <div className="w-80 bg-gray-800/60 backdrop-blur-xl border border-gray-700/50 rounded-2xl p-6 shadow-2xl">
           <UserProfile 
             username={username} 
@@ -137,6 +176,14 @@ function App() {
             messages={messages}
             onSendMessage={handleSendMessage}
             currentUser={username}
+          />
+        </div>
+        {/* Mesh Network Panel */}
+        <div className="w-[400px] flex flex-col">
+          <MeshNetworkPanel 
+            onMeshMessage={handleMeshMessage}
+            onStatusChange={handleMeshStatusChange}
+            onChannelJoin={handleChannelJoin}
           />
         </div>
       </div>
