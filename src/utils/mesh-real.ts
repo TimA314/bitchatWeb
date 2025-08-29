@@ -204,12 +204,72 @@ export class MeshNetworkManager extends EventTarget {
       return;
     }
     
+    const nickname = this.getUserNickname();
     console.log('📡 Starting BitChat presence broadcasting');
+    console.log(`📢 Broadcasting as: ${nickname}`);
+    console.log('🔧 Protocol: BitChat v1.1 with Noise XX encryption');
+    console.log('📡 Transport: Web Bluetooth, WebRTC');
+    
     this.isBroadcasting = true;
     this.dispatchEvent(new CustomEvent('broadcastStarted'));
     
-    // TODO: Implement periodic peer announcements
-    // This would send PEER_ANNOUNCEMENT messages at regular intervals
+    // Start periodic peer announcements every 30 seconds
+    this.startPeriodicAnnouncements();
+  }
+  
+  private async startPeriodicAnnouncements(): Promise<void> {
+    // Initial announcement
+    await this.broadcastPeerAnnouncement();
+    
+    // Set up periodic announcements
+    const announcementInterval = setInterval(async () => {
+      if (!this.isBroadcasting) {
+        clearInterval(announcementInterval);
+        return;
+      }
+      
+      try {
+        await this.broadcastPeerAnnouncement();
+        console.log('📢 Periodic BitChat peer announcement sent');
+      } catch (error) {
+        console.error('❌ Failed to send periodic announcement:', error);
+      }
+    }, 30000); // Every 30 seconds
+  }
+  
+  private async broadcastPeerAnnouncement(): Promise<void> {
+    try {
+      console.log('📡 Broadcasting BitChat peer announcement...');
+      
+      // Get current user identity (in a real app, this would come from user settings)
+      const userNickname = this.getUserNickname();
+      
+      // Create and broadcast peer announcement packet
+      await this.protocol.broadcastPresence(userNickname);
+      
+      console.log('✅ BitChat peer announcement broadcast complete');
+    } catch (error) {
+      console.error('❌ Failed to broadcast peer announcement:', error);
+      throw error;
+    }
+  }
+  
+  private getUserNickname(): string {
+    // Try to get nickname from various sources
+    const stored = localStorage.getItem('bitchat-nickname');
+    if (stored) return stored;
+    
+    // Fallback to browser/system info
+    const platform = navigator.platform || 'Unknown';
+    const userAgent = navigator.userAgent || '';
+    
+    if (userAgent.includes('Mobile')) {
+      return `Mobile-${platform.slice(0, 3)}-${Date.now().toString().slice(-4)}`;
+    } else if (userAgent.includes('Electron')) {
+      return `Desktop-${platform.slice(0, 3)}-${Date.now().toString().slice(-4)}`;
+    } else {
+      return `Web-${platform.slice(0, 3)}-${Date.now().toString().slice(-4)}`;
+    }
   }
   
   stopBroadcasting(): void {
@@ -230,6 +290,15 @@ export class MeshNetworkManager extends EventTarget {
   
   isBroadcastingActive(): boolean {
     return this.isBroadcasting;
+  }
+  
+  getBroadcastingInfo(): { nickname: string; isActive: boolean; capabilities: string[] } {
+    const nickname = this.getUserNickname();
+    return {
+      nickname,
+      isActive: this.isBroadcasting,
+      capabilities: ['bitchat-v1.1', 'noise-xx', 'web-browser', 'web-bluetooth', 'webrtc']
+    };
   }
   
   // Helper methods for UI compatibility

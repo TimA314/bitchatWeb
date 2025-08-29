@@ -434,7 +434,7 @@ export class BitChatProtocolManager extends EventTarget {
       flags: 0,
       timestamp: BigInt(Date.now()),
       id: messageId,
-      sender: 'User', // TODO: Get from settings
+      sender: this.getUserNickname(), // Use real nickname
       content,
       recipientNickname: recipientId ? this.identityManager.getPeer(recipientId)?.nickname : undefined
     };
@@ -457,20 +457,88 @@ export class BitChatProtocolManager extends EventTarget {
     return messageId;
   }
   
-  private async sendPeerAnnouncement(characteristic: BluetoothRemoteGATTCharacteristic): Promise<void> {
+  // Broadcast our presence to make device discoverable
+  async broadcastPresence(nickname: string): Promise<void> {
     const ownFingerprint = this.identityManager.getFingerprint();
-    if (!ownFingerprint) return;
+    if (!ownFingerprint) {
+      throw new Error('Identity not initialized');
+    }
+    
+    console.log(`📡 Broadcasting BitChat presence as: ${nickname}`);
     
     const announcement = {
-      nickname: 'User', // TODO: Get from settings
-      fingerprint: Array.from(ownFingerprint), // Convert to array for JSON
-      timestamp: Date.now()
+      nickname: nickname,
+      fingerprint: Array.from(ownFingerprint),
+      timestamp: Date.now(),
+      capabilities: ['bitchat-v1.1', 'noise-xx', 'web-browser'],
+      version: BITCHAT_PROTOCOL.VERSION,
+      transport: ['web-bluetooth', 'webrtc']
     };
     
     const packet: BitchatPacket = {
       version: BITCHAT_PROTOCOL.VERSION,
       type: MessageType.PEER_ANNOUNCEMENT,
-      ttl: 1, // Don't propagate announcements
+      ttl: 3, // Allow some propagation for discovery
+      timestamp: BigInt(Date.now()),
+      flags: 0, // Broadcast message
+      payloadLength: 0,
+      senderId: ownFingerprint.slice(0, 8),
+      payload: new TextEncoder().encode(JSON.stringify(announcement))
+    };
+    
+    packet.payloadLength = packet.payload.length;
+    
+    try {
+      await this.broadcastPacket(packet);
+      console.log('✅ BitChat presence announcement broadcast successfully');
+    } catch (error) {
+      console.error('❌ Failed to broadcast presence:', error);
+      throw error;
+    }
+  }
+  
+  private getUserNickname(): string {
+    // Get nickname from localStorage or generate one
+    const stored = localStorage.getItem('bitchat-nickname');
+    if (stored) return stored;
+    
+    // Generate a unique nickname based on browser/device info
+    const platform = navigator.platform || 'Unknown';
+    const userAgent = navigator.userAgent || '';
+    
+    let nickname: string;
+    if (userAgent.includes('Mobile')) {
+      nickname = `Mobile-${platform.slice(0, 3)}-${Date.now().toString().slice(-4)}`;
+    } else if (userAgent.includes('Electron')) {
+      nickname = `Desktop-${platform.slice(0, 3)}-${Date.now().toString().slice(-4)}`;
+    } else {
+      nickname = `Web-${platform.slice(0, 3)}-${Date.now().toString().slice(-4)}`;
+    }
+    
+    // Store for consistency
+    localStorage.setItem('bitchat-nickname', nickname);
+    return nickname;
+  }
+  
+  private async sendPeerAnnouncement(characteristic: BluetoothRemoteGATTCharacteristic): Promise<void> {
+    const ownFingerprint = this.identityManager.getFingerprint();
+    if (!ownFingerprint) return;
+    
+    const nickname = this.getUserNickname();
+    console.log(`📡 Sending peer announcement as: ${nickname}`);
+    
+    const announcement = {
+      nickname: nickname,
+      fingerprint: Array.from(ownFingerprint), // Convert to array for JSON
+      timestamp: Date.now(),
+      capabilities: ['bitchat-v1.1', 'noise-xx', 'web-bluetooth'],
+      version: BITCHAT_PROTOCOL.VERSION
+    };
+    
+    const packet: BitchatPacket = {
+      version: BITCHAT_PROTOCOL.VERSION,
+      type: MessageType.PEER_ANNOUNCEMENT,
+      ttl: 1, // Don't propagate announcements during handshake
       timestamp: BigInt(Date.now()),
       flags: 0,
       payloadLength: 0,
@@ -507,7 +575,7 @@ export class BitChatProtocolManager extends EventTarget {
       // Step 1: Send initial handshake message (-> e)
       const initialPayload = new TextEncoder().encode(JSON.stringify({
         version: BITCHAT_PROTOCOL.VERSION,
-        nickname: 'User' // TODO: Get from settings
+        nickname: this.getUserNickname() // Use real nickname
       }));
       
       const message1 = await handshakeState.writeMessage(initialPayload);

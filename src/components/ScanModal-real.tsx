@@ -42,65 +42,66 @@ export default function ScanModal({ isVisible, onClose, onConnect }: ScanModalPr
         setScanStatus('Web Bluetooth not available - showing demo networks');
         
         // Fallback to demo networks for development
-        setTimeout(() => {
-          console.log('📡 Simulating BitChat network discovery...');
-          const demoNetworks: MeshNetwork[] = [
-            {
-              id: 'demo-bitchat-1',
-              name: "Alice's BitChat Network",
-              topology: 'mesh',
-              nodes: [{
-                id: 'alice-node-1',
-                name: 'Alice-Phone',
-                isConnected: false,
-                signal: 85,
-                lastSeen: new Date(),
-                hops: 1,
-                capabilities: ['bitchat-v1.1', 'noise-xx', 'bluetooth'],
-                metadata: { version: '1.1', nodeType: 'bridge' }
-              }]
-            },
-            {
-              id: 'demo-bitchat-2', 
-              name: "Bob's BitChat Network",
-              topology: 'mesh',
-              nodes: [{
-                id: 'bob-node-1',
-                name: 'Bob-Laptop',
-                isConnected: false,
-                signal: 72,
-                lastSeen: new Date(Date.now() - 30000),
-                hops: 2,
-                capabilities: ['bitchat-v1.1', 'noise-xx', 'mesh-relay'],
-                metadata: { version: '1.1', nodeType: 'relay' }
-              }]
-            },
-            {
-              id: 'demo-bitchat-3',
-              name: "Charlie's BitChat Network", 
-              topology: 'mesh',
-              nodes: [{
-                id: 'charlie-node-1',
-                name: 'Charlie-Tablet',
-                isConnected: false,
-                signal: 68,
-                lastSeen: new Date(Date.now() - 120000),
-                hops: 3,
-                capabilities: ['bitchat-v1.1', 'verified', 'trusted'],
-                metadata: { version: '1.1', nodeType: 'endpoint' }
-              }]
-            }
-          ];
+        // setTimeout(() => {
+        //   console.log('📡 Simulating BitChat network discovery...');
+        //   const demoNetworks: MeshNetwork[] = [
+        //     {
+        //       id: 'demo-bitchat-1',
+        //       name: "Alice's BitChat Network",
+        //       topology: 'mesh',
+        //       nodes: [{
+        //         id: 'alice-node-1',
+        //         name: 'Alice-Phone',
+        //         isConnected: false,
+        //         signal: 85,
+        //         lastSeen: new Date(),
+        //         hops: 1,
+        //         capabilities: ['bitchat-v1.1', 'noise-xx', 'bluetooth'],
+        //         metadata: { version: '1.1', nodeType: 'bridge' }
+        //       }]
+        //     },
+        //     {
+        //       id: 'demo-bitchat-2', 
+        //       name: "Bob's BitChat Network",
+        //       topology: 'mesh',
+        //       nodes: [{
+        //         id: 'bob-node-1',
+        //         name: 'Bob-Laptop',
+        //         isConnected: false,
+        //         signal: 72,
+        //         lastSeen: new Date(Date.now() - 30000),
+        //         hops: 2,
+        //         capabilities: ['bitchat-v1.1', 'noise-xx', 'mesh-relay'],
+        //         metadata: { version: '1.1', nodeType: 'relay' }
+        //       }]
+        //     },
+        //     {
+        //       id: 'demo-bitchat-3',
+        //       name: "Charlie's BitChat Network", 
+        //       topology: 'mesh',
+        //       nodes: [{
+        //         id: 'charlie-node-1',
+        //         name: 'Charlie-Tablet',
+        //         isConnected: false,
+        //         signal: 68,
+        //         lastSeen: new Date(Date.now() - 120000),
+        //         hops: 3,
+        //         capabilities: ['bitchat-v1.1', 'verified', 'trusted'],
+        //         metadata: { version: '1.1', nodeType: 'endpoint' }
+        //       }]
+        //     }
+        //   ];
           
-          demoNetworks.forEach((network, index) => {
-            setTimeout(() => {
-              setDiscoveredNetworks(prev => [...prev, network]);
-            }, (index + 1) * 1500);
-          });
+        //   demoNetworks.forEach((network, index) => {
+        //     setTimeout(() => {
+        //       setDiscoveredNetworks(prev => [...prev, network]);
+        //     }, (index + 1) * 1500);
+        //   });
           
-          setScanStatus('Demo networks shown (Web Bluetooth not available)');
+        //   setScanStatus('Demo networks shown (Web Bluetooth not available)');
           
-        }, 2000);
+        // }, 2000);
+
       }
     };
 

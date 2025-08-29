@@ -53,7 +53,18 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
     };
   }, []);
 
-  const handleScanForNetworks = () => {
+  const handleScanForNetworks = async () => {
+    console.log('🔍 Starting BitChat network discovery and broadcasting...');
+    
+    // Start broadcasting our presence so other devices can discover us
+    try {
+      meshManager.startBroadcasting();
+      console.log('📡 BitChat broadcasting started');
+    } catch (error) {
+      console.error('❌ Failed to start broadcasting:', error);
+    }
+    
+    // Open the scan modal to discover other networks
     if (onOpenScanModal) {
       onOpenScanModal();
     }
