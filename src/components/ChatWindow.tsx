@@ -99,29 +99,56 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
 
       {/* Message Input */}
       <form className="p-3 lg:p-6 bg-gray-800/60 backdrop-blur-sm border-t border-gray-700/50" onSubmit={handleSubmit}>
-        <div className="flex space-x-2 lg:space-x-4 items-end">
-          <div className="flex-1 relative">
+        <div className="flex space-x-2 lg:space-x-4 items-center">
+
+          <div className="flex-1">
             <textarea
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              onKeyPress={handleKeyPress}
+              id='message-input'
+              onKeyUp={handleKeyPress}
               placeholder="Type your message..."
-              className="w-full p-3 lg:p-4 bg-gray-700/60 border border-gray-600/50 rounded-2xl resize-none outline-none transition-all duration-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:bg-gray-700/80 text-white placeholder-gray-400 min-h-[48px] lg:min-h-[56px] max-h-[120px] text-sm lg:text-base"
+              className="
+                w-full 
+                h-full 
+                p-3 
+                lg:p-4 
+                bg-gray-700/60 
+                border 
+                border-gray-600/50 
+                rounded-2xl 
+                resize-none 
+                outline-none 
+                transition-all 
+                duration-200 
+                focus:border-primary-500 
+                focus:ring-2 
+                focus:ring-primary-500/20 
+                focus:bg-gray-700/80 
+                text-white 
+                placeholder-gray-400 
+                min-h-[48px] 
+                text-sm 
+                lg:text-base"
               rows={1}
             />
           </div>
-          <button
+
+            <button
             type="submit"
-            className={`px-4 lg:px-6 py-3 lg:py-4 rounded-2xl font-semibold transition-all duration-200 min-h-[48px] lg:min-h-[56px] text-sm lg:text-base ${
+            className={`px-4 lg:px-6 py-3 lg:py-4 rounded-2xl font-semibold transition-all duration-200 h-full text-sm lg:text-base ${
               inputText.trim()
-                ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 hover:shadow-lg hover:scale-105 active:scale-95'
-                : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
+              ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 hover:shadow-lg hover:scale-105 active:scale-95'
+              : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
             }`}
             disabled={!inputText.trim()}
-          >
+            >
             <span className="hidden sm:inline">Send</span>
-            <span className="sm:hidden">📤</span>
-          </button>
+            <svg className="sm:hidden w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+            </button>
+          
         </div>
       </form>
     </div>
