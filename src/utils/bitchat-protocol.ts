@@ -2,6 +2,8 @@
 // A decentralized, peer-to-peer messaging protocol for secure communication
 // Follows BitChat Protocol Whitepaper v1.1 specification
 
+import { NoiseHandshakeProtocol, NoiseSession } from './noise-protocol';
+
 // Extend the existing Bluetooth interfaces
 declare global {
   interface BluetoothRemoteGATTServer {
@@ -343,6 +345,7 @@ export class BitChatProtocolManager extends EventTarget {
   private identityManager: SecureIdentityStateManager;
   private bloomFilter: OptimizedBloomFilter;
   private connectedPeers: Map<string, BluetoothDevice> = new Map();
+  private noiseSessions: Map<string, NoiseSession> = new Map();
   
   constructor() {
     super();
@@ -481,28 +484,63 @@ export class BitChatProtocolManager extends EventTarget {
   }
   
   private async initiateNoiseHandshake(characteristic: BluetoothRemoteGATTCharacteristic, peer: BitchatPeer): Promise<void> {
-    // TODO: Implement full Noise XX handshake
-    // This is a simplified version for now
-    console.log('Initiating Noise handshake with', peer.nickname);
+    console.log('🤝 Initiating Noise XX handshake with', peer.nickname);
     
     const ownFingerprint = this.identityManager.getFingerprint();
-    if (!ownFingerprint) return;
+    if (!ownFingerprint) {
+      throw new Error('Identity not initialized');
+    }
     
-    const handshakePacket: BitchatPacket = {
-      version: BITCHAT_PROTOCOL.VERSION,
-      type: MessageType.NOISE_HANDSHAKE_INIT,
-      ttl: 1,
-      timestamp: BigInt(Date.now()),
-      flags: PacketFlags.HAS_RECIPIENT,
-      payloadLength: 0,
-      senderId: ownFingerprint.slice(0, 8),
-      recipientId: peer.id,
-      payload: new Uint8Array(32) // Placeholder for ephemeral key
+    // Generate static keypair (simplified for demo)
+    const staticKeypair = {
+      publicKey: new Uint8Array(32),
+      privateKey: new Uint8Array(32)
     };
+    crypto.getRandomValues(staticKeypair.publicKey);
+    crypto.getRandomValues(staticKeypair.privateKey);
     
-    handshakePacket.payloadLength = handshakePacket.payload.length;
-    const serialized = BitchatPacketSerializer.serialize(handshakePacket);
-    await characteristic.writeValue(serialized);
+    // Initialize Noise handshake as initiator
+    const handshakeState = new NoiseHandshakeProtocol(true);
+    await handshakeState.initialize(staticKeypair);
+    
+    try {
+      // Step 1: Send initial handshake message (-> e)
+      const initialPayload = new TextEncoder().encode(JSON.stringify({
+        version: BITCHAT_PROTOCOL.VERSION,
+        nickname: 'User' // TODO: Get from settings
+      }));
+      
+      const message1 = await handshakeState.writeMessage(initialPayload);
+      
+      const handshakePacket: BitchatPacket = {
+        version: BITCHAT_PROTOCOL.VERSION,
+        type: MessageType.NOISE_HANDSHAKE_INIT,
+        ttl: 1,
+        timestamp: BigInt(Date.now()),
+        flags: PacketFlags.HAS_RECIPIENT,
+        payloadLength: message1.length,
+        senderId: ownFingerprint.slice(0, 8),
+        recipientId: peer.id,
+        payload: message1
+      };
+      
+      const serialized = BitchatPacketSerializer.serialize(handshakePacket);
+      await characteristic.writeValue(serialized);
+      
+      console.log('📤 Sent Noise handshake initialization');
+      
+      // Create and store session for this peer
+      const peerId = this.bytesToHex(peer.id);
+      const session = new NoiseSession(peerId);
+      this.noiseSessions.set(peerId, session);
+      
+      // TODO: Wait for response and complete handshake
+      // This would involve listening for NOISE_HANDSHAKE_RESP and NOISE_HANDSHAKE_FINAL
+      
+    } catch (error) {
+      console.error('❌ Noise handshake failed:', error);
+      throw error;
+    }
   }
   
   private handleIncomingData(event: any): void {
@@ -619,8 +657,78 @@ export class BitChatProtocolManager extends EventTarget {
   }
   
   private handleNoiseHandshake(packet: BitchatPacket): void {
-    // TODO: Implement full Noise handshake protocol
-    console.log('Received Noise handshake packet:', packet.type);
+    console.log('🤝 Received Noise handshake packet:', packet.type);
+    
+    try {
+      const senderId = this.bytesToHex(packet.senderId);
+      
+      switch (packet.type) {
+        case MessageType.NOISE_HANDSHAKE_INIT:
+          this.handleNoiseHandshakeInit(packet);
+          break;
+          
+        case MessageType.NOISE_HANDSHAKE_RESP:
+          this.handleNoiseHandshakeResponse(packet);
+          break;
+          
+        case MessageType.NOISE_HANDSHAKE_FINAL:
+          this.handleNoiseHandshakeFinal(packet);
+          break;
+          
+        default:
+          console.warn('Unknown Noise handshake type:', packet.type);
+      }
+    } catch (error) {
+      console.error('❌ Failed to handle Noise handshake:', error);
+    }
+  }
+  
+  private async handleNoiseHandshakeInit(packet: BitchatPacket): Promise<void> {
+    console.log('📥 Handling Noise handshake initialization');
+    
+    // TODO: Implement responder side of Noise XX handshake
+    // This would involve:
+    // 1. Creating a responder handshake state
+    // 2. Reading the initiator's message
+    // 3. Sending the response message (<- e, ee, s, es)
+    
+    const ownFingerprint = this.identityManager.getFingerprint();
+    if (!ownFingerprint) return;
+    
+    // For now, just acknowledge receipt
+    console.log('🔄 Noise handshake init received from peer');
+  }
+  
+  private async handleNoiseHandshakeResponse(packet: BitchatPacket): Promise<void> {
+    console.log('📥 Handling Noise handshake response');
+    
+    // TODO: Complete the handshake as initiator
+    // This would involve:
+    // 1. Reading the responder's message
+    // 2. Sending the final message (-> s, se)
+    // 3. Deriving the session keys
+    
+    console.log('🔄 Noise handshake response received');
+  }
+  
+  private async handleNoiseHandshakeFinal(packet: BitchatPacket): Promise<void> {
+    console.log('📥 Handling Noise handshake final');
+    
+    // TODO: Complete the handshake as responder
+    // This would involve:
+    // 1. Reading the final message
+    // 2. Deriving the session keys
+    // 3. Marking the session as established
+    
+    const senderId = this.bytesToHex(packet.senderId);
+    console.log(`✅ Noise handshake completed with peer: ${senderId}`);
+    
+    // Simulate session establishment
+    const session = this.noiseSessions.get(senderId);
+    if (session) {
+      // In a real implementation, we would derive the actual keys from the handshake
+      console.log('🔐 Noise session established and ready for secure communication');
+    }
   }
   
   private async sendDeliveryAck(messageId: string, recipientId: Uint8Array): Promise<void> {

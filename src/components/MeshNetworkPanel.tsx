@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { meshManager, type MeshNetwork, type MeshNode } from '../utils/mesh';
+import { meshManager, type MeshNetwork, type MeshNode } from '../utils/mesh-real';
 
 interface MeshNetworkPanelProps {
   onMeshMessage?: (message: string, from: string) => void;

@@ -5,8 +5,8 @@ import { MobileNav } from './components/MobileNav'
 import { Toast } from './components/Toast'
 import { MeshNetworkPanel } from './components/MeshNetworkPanel'
 import { checkBluetoothCompatibility } from './utils/bluetooth'
-import type { MeshNetwork } from './utils/mesh'
-import { ScanModal } from './components/ScanModal'
+import type { MeshNetwork } from './utils/mesh-real'
+import ScanModal from './components/ScanModal-real'
 
 interface Message {
   id: string;
@@ -133,16 +133,16 @@ function App() {
     setShowScanModal(false);
   };
 
-  const handleConnectToNetwork = async (network: MeshNetwork) => {
+  const handleConnectToNetwork = async (networkId: string) => {
     try {
-      console.log('Connecting to network:', network.name);
-      handleBluetoothMessage(`Connected to ${network.name}`, 'success');
+      console.log('🔗 Connecting to BitChat network:', networkId);
+      handleBluetoothMessage(`Connected to BitChat network`, 'success');
       setShowScanModal(false);
       
       // Add a message about the connection
       const connectionMessage: Message = {
         id: Date.now().toString(),
-        text: `Connected to BitChat network: ${network.name}`,
+        text: `Connected to BitChat network: ${networkId}`,
         timestamp: new Date(),
         sender: 'other',
         senderName: 'BitChat System'
@@ -212,9 +212,9 @@ function App() {
       </div>
 
       {/* Full-Screen Scan Modal */}
-      <ScanModal
-        isOpen={showScanModal}
-        onClose={handleCloseScanModal}
+            <ScanModal
+        isVisible={showScanModal}
+        onClose={() => setShowScanModal(false)}
         onConnect={handleConnectToNetwork}
       />
     </div>
