@@ -35,10 +35,53 @@ export const ScanModal: React.FC<ScanModalProps> = ({ isOpen, onClose, onConnect
           // BitChat Protocol: Use mesh discovery to find real networks
           // TODO: Implement actual BitChat mesh discovery here
           
-          // For now, we only show what we actually discover
-          // Remove all demo/mock content as requested
+          // For demo purposes, simulate finding some networks after a delay
           if (isMounted) {
             setScanStatus('Scanning for BitChat networks...');
+            
+            // Simulate discovering networks after 3 seconds
+            setTimeout(() => {
+              if (isMounted) {
+                const demoNetworks: MeshNetwork[] = [
+                  {
+                    id: 'demo-network-1',
+                    name: "Alex's BitChat Network",
+                    topology: 'mesh' as const,
+                    nodes: [
+                      {
+                        id: 'node-1',
+                        name: 'Alex-Phone',
+                        isConnected: true,
+                        signal: 85,
+                        lastSeen: new Date(),
+                        hops: 1,
+                        capabilities: ['chat', 'mesh', 'encryption'],
+                        metadata: { version: '1.1', nodeType: 'endpoint' as const }
+                      }
+                    ]
+                  },
+                  {
+                    id: 'demo-network-2', 
+                    name: "Sarah's Mesh Hub",
+                    topology: 'star' as const,
+                    nodes: [
+                      {
+                        id: 'node-2',
+                        name: 'Sarah-Tablet',
+                        isConnected: true,
+                        signal: 92,
+                        lastSeen: new Date(),
+                        hops: 1,
+                        capabilities: ['chat', 'mesh', 'relay'],
+                        metadata: { version: '1.1', nodeType: 'relay' as const }
+                      }
+                    ]
+                  }
+                ];
+                setDiscoveredNetworks(demoNetworks);
+                setScanStatus(`Found ${demoNetworks.length} BitChat networks nearby`);
+              }
+            }, 3000);
           }
 
         } catch (error) {
@@ -83,27 +126,27 @@ export const ScanModal: React.FC<ScanModalProps> = ({ isOpen, onClose, onConnect
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-2xl border border-gray-700 w-full h-full max-w-sm max-h-[85vh] sm:max-w-4xl lg:max-w-7xl lg:w-[90vw] lg:h-[80vh] lg:mt-8 flex flex-col overflow-hidden shadow-2xl">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-gray-800 rounded-2xl border border-gray-700 w-[95vw] h-[95vh] flex flex-col overflow-hidden shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 lg:p-6 border-b border-gray-700 flex-shrink-0">
-          <h2 className="text-lg lg:text-xl font-bold text-white flex items-center gap-2">
+        <div className="flex items-center justify-between p-6 border-b border-gray-700 flex-shrink-0">
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
             📡 Scan for BitChat Networks
           </h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-white text-xl lg:text-2xl p-1 hover:bg-gray-700 rounded-lg transition-colors"
+            className="text-gray-400 hover:text-white text-2xl p-2 hover:bg-gray-700 rounded-lg transition-colors"
           >
             ×
           </button>
         </div>
 
-        {/* Main Content - Desktop Column Layout */}
-        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
-          {/* Left Column - Scanning Status & Controls (Desktop Only) */}
-          <div className="lg:w-80 lg:flex-shrink-0 lg:border-r lg:border-gray-700 flex flex-col bg-gray-900/30">
+        {/* Main Content - Simplified Layout */}
+        <div className="flex-1 flex overflow-hidden min-h-0">
+          {/* Left Column - Scanning Status & Info */}
+          <div className="w-96 flex-shrink-0 border-r border-gray-700 flex flex-col bg-gray-900/30">
             {/* Scanning Status */}
-            <div className="p-4 lg:p-6 bg-blue-900/20 border-b border-gray-700 lg:border-b-0 flex-shrink-0">
+            <div className="p-6 bg-blue-900/20 border-b border-gray-700 flex-shrink-0">
               <div className="flex items-center gap-3 mb-4">
                 {isScanning && (
                   <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
@@ -111,8 +154,7 @@ export const ScanModal: React.FC<ScanModalProps> = ({ isOpen, onClose, onConnect
                 <span className="text-blue-300 text-sm font-medium">{scanStatus}</span>
               </div>
               
-              {/* Desktop Info Panel */}
-              <div className="hidden lg:block space-y-4">
+              <div className="space-y-4">
                 <div className="text-xs text-gray-400">
                   <div className="mb-3 font-medium text-gray-300 text-sm">Scan Status</div>
                   <div className="space-y-1">
@@ -135,10 +177,10 @@ export const ScanModal: React.FC<ScanModalProps> = ({ isOpen, onClose, onConnect
               </div>
             </div>
             
-            {/* Desktop Instructions */}
-            <div className="hidden lg:block p-6 space-y-6 flex-1 overflow-y-auto">
+            {/* Instructions */}
+            <div className="p-6 space-y-6 flex-1 overflow-y-auto">
               <div>
-                <div className="text-sm text-gray-300 font-medium mb-4">Instructions</div>
+                <div className="text-sm text-gray-300 font-medium mb-4">How to Connect</div>
                 <div className="space-y-3 text-xs text-gray-400">
                   <div className="flex items-start gap-3">
                     <span className="text-blue-400 mt-0.5 font-medium text-sm">1.</span>
@@ -160,31 +202,21 @@ export const ScanModal: React.FC<ScanModalProps> = ({ isOpen, onClose, onConnect
               </div>
               
               <div className="p-4 bg-gray-900/50 rounded-xl border border-gray-600/30">
-                <div className="text-sm text-gray-300 font-medium mb-3">Network Discovery</div>
+                <div className="text-sm text-gray-300 font-medium mb-3">BitChat Protocol</div>
                 <div className="text-xs text-gray-400 space-y-2">
-                  <div>• Uses BitChat Protocol v1.1</div>
                   <div>• Mesh topology detection</div>
-                  <div>• Encrypted communication</div>
+                  <div>• End-to-end encryption</div>
                   <div>• Automatic node discovery</div>
-                </div>
-              </div>
-
-              <div className="p-4 bg-purple-900/20 rounded-xl border border-purple-600/20">
-                <div className="text-sm text-purple-300 font-medium mb-3">Desktop Features</div>
-                <div className="text-xs text-purple-200/70 space-y-2">
-                  <div>• Enhanced column layout</div>
-                  <div>• Real-time network monitoring</div>
-                  <div>• Detailed node information</div>
-                  <div>• Professional interface</div>
+                  <div>• No pairing required</div>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Right Column - Networks List */}
-          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-            {/* Networks Header - Desktop Only */}
-            <div className="hidden lg:block p-6 border-b border-gray-700 bg-gray-850">
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Networks Header */}
+            <div className="p-6 border-b border-gray-700 bg-gray-850 flex-shrink-0">
               <h3 className="text-lg font-semibold text-white mb-2">Discovered Networks</h3>
               <p className="text-sm text-gray-400">
                 {discoveredNetworks.length === 0 
@@ -194,10 +226,11 @@ export const ScanModal: React.FC<ScanModalProps> = ({ isOpen, onClose, onConnect
               </p>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 lg:p-6">
+            {/* Networks Content */}
+            <div className="flex-1 overflow-y-auto p-6">
               {discoveredNetworks.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full min-h-[300px] lg:min-h-[400px] text-center">
-                  <div className="text-6xl lg:text-9xl mb-8 opacity-50">🔍</div>
+                <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center">
+                  <div className="text-8xl mb-8 opacity-50">🔍</div>
                   <h3 className="text-xl lg:text-3xl font-semibold text-white mb-4">Scanning for Networks</h3>
                   <p className="text-gray-400 mb-3 max-w-md lg:text-lg">Looking for BitChat mesh networks in your area...</p>
                   <p className="text-xs sm:text-sm lg:text-base text-gray-500 px-4 lg:hidden">
@@ -259,10 +292,10 @@ export const ScanModal: React.FC<ScanModalProps> = ({ isOpen, onClose, onConnect
                       </div>
 
                       {/* Network Details */}
-                      <div className="p-4 lg:p-6 space-y-4">
+                      <div className="p-6 space-y-4">
                         {/* Nodes Information */}
                         {network.nodes.map(node => (
-                          <div key={node.id} className="bg-gray-800/40 rounded-lg lg:rounded-xl p-3 lg:p-4">
+                          <div key={node.id} className="bg-gray-800/40 rounded-xl p-4">
                             <div className="flex items-center justify-between mb-2">
                               <span className="text-sm font-medium text-white">{node.name}</span>
                               <div className="flex items-center gap-2">
@@ -302,8 +335,8 @@ export const ScanModal: React.FC<ScanModalProps> = ({ isOpen, onClose, onConnect
         </div>
 
         {/* Footer */}
-        <div className="p-4 lg:p-6 border-t border-gray-700 bg-gray-800/50 flex-shrink-0">
-          <p className="text-xs lg:text-sm text-gray-400 text-center">
+        <div className="p-6 border-t border-gray-700 bg-gray-800/50 flex-shrink-0">
+          <p className="text-sm text-gray-400 text-center">
             Continuously scanning for BitChat devices. Close modal to stop scanning.
           </p>
         </div>

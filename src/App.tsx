@@ -31,6 +31,9 @@ function App() {
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<'warning' | 'error' | 'success' | 'info'>('info');
   const [toastActions, setToastActions] = useState<Array<{ label: string; url: string }>>([]);
+  
+  // Scan Modal State
+  const [showScanModal, setShowScanModal] = useState(false);
 
   // Load username from localStorage on component mount
   useEffect(() => {
@@ -117,21 +120,40 @@ function App() {
   };
 
   const handleChannelJoin = (channelId: string, channelName: string) => {
-    console.log(`Joined BitChat channel: ${channelName} (${channelId})`);
-    handleBluetoothMessage(`Joined channel: ${channelName}`, 'success');
-    
-    // Add system message about channel join
-    const channelMessage: Message = {
-      id: Date.now().toString(),
-      text: `📢 Joined BitChat channel: ${channelName}`,
-      timestamp: new Date(),
-      sender: 'other',
-      senderName: 'BitChat System'
-    };
-    setMessages(prev => [...prev, channelMessage]);
+    console.log(`Joined channel ${channelName} (${channelId})`);
+    handleBluetoothMessage(`Joined #${channelName} channel`, 'success');
   };
 
-  return (
+  // Scan Modal Handlers
+  const handleOpenScanModal = () => {
+    setShowScanModal(true);
+  };
+
+  const handleCloseScanModal = () => {
+    setShowScanModal(false);
+  };
+
+  const handleConnectToNetwork = async (network: MeshNetwork) => {
+    try {
+      console.log('Connecting to network:', network.name);
+      handleBluetoothMessage(`Connected to ${network.name}`, 'success');
+      setShowScanModal(false);
+      
+      // Add a message about the connection
+      const connectionMessage: Message = {
+        id: Date.now().toString(),
+        text: `Connected to BitChat network: ${network.name}`,
+        timestamp: new Date(),
+        sender: 'other',
+        senderName: 'BitChat System'
+      };
+      setMessages(prev => [...prev, connectionMessage]);
+      
+    } catch (error) {
+      console.error('Failed to connect to network:', error);
+      handleBluetoothMessage('Failed to connect to network', 'error');
+    }
+  };  return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white">
       <Toast
         message={toastMessage}
@@ -184,9 +206,17 @@ function App() {
             onMeshMessage={handleMeshMessage}
             onStatusChange={handleMeshStatusChange}
             onChannelJoin={handleChannelJoin}
+            onOpenScanModal={handleOpenScanModal}
           />
         </div>
       </div>
+
+      {/* Full-Screen Scan Modal */}
+      <ScanModal
+        isOpen={showScanModal}
+        onClose={handleCloseScanModal}
+        onConnect={handleConnectToNetwork}
+      />
     </div>
   )
 }

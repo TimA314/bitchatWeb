@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { meshManager, type MeshNetwork, type MeshNode } from '../utils/mesh';
-import { ScanModal } from './ScanModal';
 
 interface MeshNetworkPanelProps {
   onMeshMessage?: (message: string, from: string) => void;
   onStatusChange?: (status: string, network?: MeshNetwork) => void;
   onChannelJoin?: (channelId: string, channelName: string) => void;
+  onOpenScanModal?: () => void;
 }
 
 interface Channel {
@@ -15,14 +15,19 @@ interface Channel {
   isDefault: boolean;
 }
 
-export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({ onMeshMessage, onStatusChange, onChannelJoin }) => {
+export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({ 
+  onMeshMessage, 
+  onStatusChange, 
+  onChannelJoin, 
+  onOpenScanModal 
+}) => {
   const [availableNetworks, setAvailableNetworks] = useState<MeshNetwork[]>([]);
   const [currentNetwork, setCurrentNetwork] = useState<MeshNetwork | null>(null);
   const [connectedNodes, setConnectedNodes] = useState<MeshNode[]>([]);
   const [statusMessage, setStatusMessage] = useState('');
   const [availableChannels, setAvailableChannels] = useState<Channel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
-  const [showScanModal, setShowScanModal] = useState(false);
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
 
   // Generate some default channels when connected
   const generateChannels = (network: MeshNetwork): Channel[] => {
@@ -34,11 +39,24 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({ onMeshMessag
     ];
   };
 
-  // Remove the automatic mock network discovery
-  // Now we only show what's actually found through scanning
+  // Listen for mesh manager events
+  React.useEffect(() => {
+    const handleBroadcastStarted = () => {
+      setIsBroadcasting(true);
+      setStatusMessage('Broadcasting network - discoverable by other devices');
+    };
+
+    meshManager.addEventListener('networkBroadcastStarted', handleBroadcastStarted);
+
+    return () => {
+      meshManager.removeEventListener('networkBroadcastStarted', handleBroadcastStarted);
+    };
+  }, []);
 
   const handleScanForNetworks = () => {
-    setShowScanModal(true);
+    if (onOpenScanModal) {
+      onOpenScanModal();
+    }
   };
 
   const handleConnectToNetwork = async (network: MeshNetwork) => {
@@ -102,11 +120,6 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({ onMeshMessag
     onChannelJoin?.(channel.id, channel.name);
   };
 
-  const handleNetworkConnect = (network: MeshNetwork) => {
-    setShowScanModal(false);
-    handleConnectToNetwork(network);
-  };
-
   return (
     <div className="h-full flex flex-col bg-gradient-to-br from-gray-900/80 to-purple-900/60 backdrop-blur-md rounded-2xl border border-purple-300/20 p-6 shadow-2xl">
       {/* Header */}
@@ -114,13 +127,15 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({ onMeshMessag
         <h2 className="text-xl font-bold text-white flex items-center gap-2">
           🕸️ BitChat Mesh Network
         </h2>
-        <div className="flex gap-2">
-          <button
-            onClick={handleScanForNetworks}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white text-sm font-medium transition-colors"
-          >
-            📱 Scan for BitChat Networks
-          </button>
+        <div className="flex items-center gap-2">
+          {(currentNetwork || isBroadcasting) && (
+            <div className="flex items-center space-x-2 px-3 py-1 bg-green-500/20 rounded-full border border-green-500/30">
+              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+              <span className="text-green-400 text-xs font-medium">
+                {currentNetwork ? 'Connected' : 'Broadcasting'}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -242,30 +257,26 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({ onMeshMessag
           </div>
         )}
 
-        {/* Empty State */}
-        {availableNetworks.length === 0 && (
-          <div className="text-center py-8">
-            <div className="text-6xl mb-4">📱</div>
-            <h3 className="text-xl font-semibold text-white mb-2">Looking for BitChat Networks</h3>
-            <p className="text-gray-400 mb-4">
-              Make sure your Android BitChat app is running and Bluetooth is enabled on both devices.
-            </p>
-            <button
-              onClick={handleScanForNetworks}
-              className="px-6 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-white font-medium transition-colors"
-            >
-              Scan for Networks
-            </button>
-          </div>
-        )}
+        {/* Unified Scan Section */}
+        <div className="text-center py-8">
+          <div className="text-6xl mb-4">�</div>
+          <h3 className="text-xl font-semibold text-white mb-2">
+            {availableNetworks.length > 0 ? 'Scan for More Networks' : 'Discover BitChat Networks'}
+          </h3>
+          <p className="text-gray-400 mb-4">
+            {availableNetworks.length > 0 
+              ? 'Find additional mesh networks in your area'
+              : 'Make sure BitChat apps are running with Bluetooth enabled nearby'
+            }
+          </p>
+          <button
+            onClick={handleScanForNetworks}
+            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 rounded-lg text-white font-medium transition-all duration-200 hover:shadow-lg hover:shadow-purple-500/25 active:scale-95"
+          >
+            🕸️ Scan for Mesh Networks
+          </button>
+        </div>
       </div>
-
-      {/* Scan Modal */}
-      <ScanModal
-        isOpen={showScanModal}
-        onClose={() => setShowScanModal(false)}
-        onConnect={handleNetworkConnect}
-      />
     </div>
   );
 };

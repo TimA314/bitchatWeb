@@ -176,33 +176,10 @@ export const UserProfile: React.FC<UserProfileProps> = ({
             <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-blue-500/20 to-green-500/20 rounded-full flex items-center justify-center border border-blue-500/30">
               <span className="text-3xl">📡</span>
             </div>
-            <h5 className="text-lg font-semibold text-white mb-2">Bluetooth Connected</h5>
+            <h5 className="text-lg font-semibold text-white mb-2">Bluetooth Enabled</h5>
             <p className="text-sm text-gray-400 mb-4">
               Web Bluetooth API is enabled and ready for device connections.
             </p>
-            <button
-              onClick={handleBluetoothTest}
-              disabled={isTestingBluetooth}
-              className={`px-6 py-2 rounded-lg font-medium text-sm transition-all duration-300 border ${
-                isTestingBluetooth
-                  ? 'bg-gray-600/50 text-gray-400 cursor-not-allowed border-gray-600/50'
-                  : 'bg-gradient-to-r from-blue-500/80 to-purple-500/80 hover:from-blue-500 hover:to-purple-500 text-white border-blue-500/50 hover:border-blue-400 hover:shadow-lg hover:shadow-blue-500/25 hover:-translate-y-0.5 active:scale-95'
-              }`}
-            >
-              <div className="flex items-center justify-center space-x-2">
-                {isTestingBluetooth ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                    <span>Testing...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>🔍</span>
-                    <span>Find Devices</span>
-                  </>
-                )}
-              </div>
-            </button>
           </div>
         ) : bluetoothReady === false ? (
           /* Show setup options when Bluetooth is not ready */
