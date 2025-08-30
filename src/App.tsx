@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react'
-import { ChatWindow } from './components/ChatWindow'
-import { UserProfile } from './components/UserProfile'
-import { MobileNav } from './components/MobileNav'
-import { Toast } from './components/Toast'
-import { MeshNetworkPanel } from './components/MeshNetworkPanel'
-import { checkBluetoothCompatibility } from './utils/bluetooth'
-import type { MeshNetwork } from './utils/mesh'
-import ScanModal from './components/ScanModal-real'
+import { useState, useEffect } from 'react';
+import './App.css';
+import { ChatWindow } from './components/ChatWindow';
+import { MeshNetworkPanel } from './components/MeshNetworkPanel';
+import { UserProfile } from './components/UserProfile';
+import { MobileNav } from './components/MobileNav';
+import { Toast } from './components/Toast';
+import { checkBluetoothCompatibility } from './utils/bluetooth';
+import { type MeshNetwork } from './utils/mesh';
 
 interface Message {
   id: string;
@@ -31,9 +31,6 @@ function App() {
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<'warning' | 'error' | 'success' | 'info'>('info');
   const [toastActions, setToastActions] = useState<Array<{ label: string; url: string }>>([]);
-  
-  // Scan Modal State
-  const [showScanModal, setShowScanModal] = useState(false);
 
   // Load username from localStorage on component mount
   useEffect(() => {
@@ -113,32 +110,7 @@ function App() {
     handleBluetoothMessage(`Joined #${channelName} channel`, 'success');
   };
 
-  // Scan Modal Handlers
-  const handleOpenScanModal = () => {
-    setShowScanModal(true);
-  };
-
-  const handleConnectToNetwork = async (networkId: string) => {
-    try {
-      console.log('🔗 Connecting to BitChat network:', networkId);
-      handleBluetoothMessage(`Connected to BitChat network`, 'success');
-      setShowScanModal(false);
-      
-      // Add a message about the connection
-      const connectionMessage: Message = {
-        id: Date.now().toString(),
-        text: `Connected to BitChat network: ${networkId}`,
-        timestamp: new Date(),
-        sender: 'other',
-        senderName: 'BitChat System'
-      };
-      setMessages(prev => [...prev, connectionMessage]);
-      
-    } catch (error) {
-      console.error('Failed to connect to network:', error);
-      handleBluetoothMessage('Failed to connect to network', 'error');
-    }
-  };  return (
+  return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white">
       <Toast
         message={toastMessage}
@@ -189,17 +161,9 @@ function App() {
           <MeshNetworkPanel 
             onStatusChange={handleMeshStatusChange}
             onChannelJoin={handleChannelJoin}
-            onOpenScanModal={handleOpenScanModal}
           />
         </div>
       </div>
-
-      {/* Full-Screen Scan Modal */}
-            <ScanModal
-        isVisible={showScanModal}
-        onClose={() => setShowScanModal(false)}
-        onConnect={handleConnectToNetwork}
-      />
     </div>
   )
 }

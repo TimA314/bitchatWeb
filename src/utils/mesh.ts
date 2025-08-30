@@ -1,7 +1,7 @@
 // BitChat Protocol Mesh Networking
-// Real implementation of the BitChat Protocol v1.1 specification
+// Compatibility layer for existing UI components
 
-import { bitchatProtocol, type BitchatPeer } from './bitchat-protocol.js';
+import { getBitChatInstance, type BitChatPeer, BitChatProtocol } from './bitchat';
 
 // Legacy compatibility interfaces for existing UI
 export interface MeshNetwork {
@@ -26,309 +26,159 @@ export interface MeshNode {
   };
 }
 
-// Real BitChat Protocol Mesh Manager
+// Mesh Network Manager - compatibility wrapper
 export class MeshNetworkManager extends EventTarget {
-  private protocol: typeof bitchatProtocol;
-  private discoveredNetworks: Map<string, MeshNetwork> = new Map();
-  private isScanning: boolean = false;
-  private isBroadcasting: boolean = false;
-  
+  private bitchat: BitChatProtocol | null = null;
+  private networks = new Map<string, MeshNetwork>();
+  private isInitialized = false;
+
   constructor() {
     super();
-    this.protocol = bitchatProtocol;
-    this.setupProtocolEventListeners();
   }
-  
-  private setupProtocolEventListeners(): void {
-    // Convert BitChat protocol events to mesh network events for UI compatibility
-    this.protocol.addEventListener('peerDiscovered', (event: any) => {
-      const peer: BitchatPeer = event.detail;
-      console.log('🔍 Discovered BitChat peer:', peer.nickname);
-      
-      const network = this.createNetworkFromPeer(peer);
-      this.discoveredNetworks.set(network.id, network);
-      
-      this.dispatchEvent(new CustomEvent('networkDiscovered', { detail: network }));
+
+  private async initializeBitChat() {
+    if (!this.isInitialized) {
+      this.bitchat = await getBitChatInstance();
+      this.initializeEventHandlers();
+      this.isInitialized = true;
+    }
+  }
+
+  private initializeEventHandlers() {
+    if (!this.bitchat) return;
+
+    // Listen to BitChat events and translate them to legacy mesh events
+    this.bitchat.addEventListener('peerConnected', (event: any) => {
+      this.handlePeerConnected(event.detail);
     });
-    
-    this.protocol.addEventListener('peerConnected', (event: any) => {
-      const peer: BitchatPeer = event.detail;
-      console.log('🔗 Connected to BitChat peer:', peer.nickname);
-      
-      const node = this.peerToNode(peer);
-      this.dispatchEvent(new CustomEvent('nodeConnected', { detail: node }));
-      
-      // Update network status
-      const network = this.discoveredNetworks.get(peer.fingerprint);
-      if (network) {
-        this.dispatchEvent(new CustomEvent('networkStatusChanged', {
-          detail: { network, status: 'connected' }
-        }));
-      }
+
+    this.bitchat.addEventListener('peerDisconnected', (event: any) => {
+      this.handlePeerDisconnected(event.detail);
     });
-    
-    this.protocol.addEventListener('messageReceived', (event: any) => {
-      const { message, fromPeerId } = event.detail;
-      console.log('📨 Received BitChat message:', message.content);
-      
-      // Create a node representation for the sender
-      const senderNode = this.createNodeFromSenderId(fromPeerId);
-      
-      this.dispatchEvent(new CustomEvent('messageReceived', {
-        detail: {
-          message: { 
-            messageType: 'chat', 
-            content: message.content,
-            id: message.id,
-            timestamp: message.timestamp
-          },
-          fromNode: senderNode
-        }
-      }));
+
+    this.bitchat.addEventListener('messageReceived', (event: any) => {
+      this.handleMessageReceived(event.detail);
     });
   }
-  
-  async initialize(): Promise<void> {
-    try {
-      console.log('🚀 Initializing BitChat Protocol...');
-      await this.protocol.start();
-      console.log('✅ BitChat Protocol initialized successfully');
-    } catch (error) {
-      console.error('❌ Failed to initialize BitChat Protocol:', error);
-      throw error;
-    }
-  }
 
-  async scanForAndroidDevice(): Promise<MeshNetwork[]> {
-    console.log('Scanning for BitChat networks using mesh protocol...');
-    this.isScanning = true;
-    
-    try {
-      // Initialize BitChat protocol for mesh discovery
-      console.log('Initializing BitChat protocol for mesh discovery...');
-      await this.protocol.start();
-      
-      // Start broadcasting our own network so others can discover us
-      await this.startNetworkBroadcast();
-      
-      // Get actual discovered peers from protocol
-      const discoveredPeers = this.protocol.getPeers();
-      
-      const networks = discoveredPeers.map((peer: BitchatPeer) => ({
-        id: peer.fingerprint,
-        name: `${peer.nickname}'s Network`,
-        nodes: [this.peerToNode(peer)],
-        topology: 'mesh' as const
-      }));
-
-      console.log(`Found ${networks.length} BitChat mesh network(s)`);
-      return networks;
-    } catch (error) {
-      console.error('Failed to scan for BitChat networks:', error);
-      return [];
-    } finally {
-      this.isScanning = false;
-    }
-  }
-
-  async startScanning(): Promise<MeshNetwork[]> {
-    return this.scanForAndroidDevice();
-  }
-
-  stopScanning(): void {
-    this.isScanning = false;
-    console.log('Stopped scanning for BitChat networks');
-  }
-
-  startBroadcasting(): void {
-    this.startNetworkBroadcast().catch(console.error);
-  }
-
-  async connectToNetwork(networkId: string): Promise<boolean> {
-    try {
-      console.log('Connecting to BitChat mesh network:', networkId);
-      
-      // Initialize protocol if not already done
-      await this.protocol.start();
-      
-      // BitChat Protocol: Establish secure connection to the mesh network
-      console.log('🕸️ Joining BitChat mesh network...');
-      
-      // TODO: Implement actual peer connection logic
-      
-      console.log('✅ Connected to BitChat mesh network');
-      return true;
-    } catch (error) {
-      console.error('Failed to connect to BitChat mesh network:', error);
-      return false;
-    }
-  }
-
-  async disconnectFromNetwork(): Promise<void> {
-    this.isBroadcasting = false;
-    this.dispatchEvent(new CustomEvent('networkStatusChanged', {
-      detail: { status: 'disconnected' }
-    }));
-    
-    console.log('Disconnected from BitChat network');
-  }
-
-  async sendChatMessage(content: string, recipientId?: string): Promise<void> {
-    try {
-      const isPrivate = !!recipientId;
-      await this.protocol.sendMessage(content, recipientId, isPrivate);
-      console.log(`BitChat Protocol: Message sent successfully`);
-    } catch (error) {
-      console.error('Failed to send BitChat message:', error);
-      throw error;
-    }
-  }
-
-  // Convert BitChat peer to MeshNode for UI compatibility
-  private peerToNode(peer: BitchatPeer): MeshNode {
-    return {
+  private handlePeerConnected(peer: BitChatPeer) {
+    // Convert BitChat peer to MeshNode format
+    const node: MeshNode = {
       id: peer.fingerprint,
-      name: peer.nickname,
-      isConnected: peer.isConnected,
-      signal: this.calculateSignalStrength(peer),
-      lastSeen: peer.lastSeen,
-      hops: 1, // Direct connection
-      capabilities: ['chat', 'mesh', 'encryption', 'noise-protocol'],
-      metadata: {
-        version: '1.1',
-        nodeType: 'endpoint'
-      }
-    };
-  }
-
-  private createNetworkFromPeer(peer: BitchatPeer): MeshNetwork {
-    return {
-      id: peer.fingerprint,
-      name: `${peer.nickname}'s Network`,
-      nodes: [this.peerToNode(peer)],
-      topology: 'mesh'
-    };
-  }
-
-  private createNodeFromSenderId(senderId: string): MeshNode {
-    return {
-      id: senderId,
-      name: 'Unknown Peer',
-      isConnected: true,
-      signal: 75,
-      lastSeen: new Date(),
+      name: peer.nickname || `Device ${peer.fingerprint.slice(0, 8)}`,
+      isConnected: peer.isOnline,
+      signal: 50, // Default signal strength
+      lastSeen: new Date(peer.lastSeen),
       hops: 1,
-      capabilities: ['chat', 'mesh'],
+      capabilities: [], // BitChat doesn't track capabilities in the same way
       metadata: {
         nodeType: 'endpoint'
       }
     };
+
+    // Add to default network
+    const defaultNetwork = this.getOrCreateNetwork('default');
+    const existingIndex = defaultNetwork.nodes.findIndex(n => n.id === node.id);
+    if (existingIndex >= 0) {
+      defaultNetwork.nodes[existingIndex] = node;
+    } else {
+      defaultNetwork.nodes.push(node);
+    }
+
+    this.dispatchEvent(new CustomEvent('nodeConnected', { detail: node }));
+    this.dispatchEvent(new CustomEvent('networkUpdated', { detail: defaultNetwork }));
   }
 
-  private calculateSignalStrength(_peer: BitchatPeer): number {
-    // Return default signal strength until RSSI is implemented
-    return 75; // Default to good signal
-  }
-
-  private async startNetworkBroadcast(): Promise<void> {
-    try {
-      console.log('🕸️ Starting BitChat network broadcast...');
+  private handlePeerDisconnected(peer: BitChatPeer) {
+    const defaultNetwork = this.getOrCreateNetwork('default');
+    const nodeIndex = defaultNetwork.nodes.findIndex(n => n.id === peer.fingerprint);
+    
+    if (nodeIndex >= 0) {
+      const node = defaultNetwork.nodes[nodeIndex];
+      node.isConnected = false;
       
-      // BitChat Protocol: Make ourselves discoverable to other devices
-      // This allows other BitChat apps to find and connect to our network
-      this.isBroadcasting = true;
-      
-      console.log('✅ Network broadcast started - now discoverable by other devices');
-      
-      // Dispatch event to update UI
-      this.dispatchEvent(new CustomEvent('networkBroadcastStarted', {
-        detail: { status: 'broadcasting' }
-      }));
-      
-    } catch (error) {
-      console.error('❌ Failed to start network broadcast:', error);
-      throw error;
+      this.dispatchEvent(new CustomEvent('nodeDisconnected', { detail: node }));
+      this.dispatchEvent(new CustomEvent('networkUpdated', { detail: defaultNetwork }));
     }
   }
 
-  // Public getters for UI
-  getDiscoveredNetworks(): MeshNetwork[] {
-    return Array.from(this.discoveredNetworks.values());
+  private handleMessageReceived(data: { peerId: string; message: any }) {
+    this.dispatchEvent(new CustomEvent('messageReceived', { detail: data }));
   }
 
-  isCurrentlyScanning(): boolean {
-    return this.isScanning;
+  private getOrCreateNetwork(id: string): MeshNetwork {
+    let network = this.networks.get(id);
+    if (!network) {
+      network = {
+        id,
+        name: id === 'default' ? 'BitChat Network' : `Network ${id}`,
+        nodes: [],
+        topology: 'mesh'
+      };
+      this.networks.set(id, network);
+    }
+    return network;
   }
 
-  isCurrentlyBroadcasting(): boolean {
-    return this.isBroadcasting;
+  // Public API for compatibility
+  async startNetworking(): Promise<void> {
+    await this.initializeBitChat();
+    if (this.bitchat) {
+      await this.bitchat.start();
+    }
   }
 
-  getMyFingerprint(): string {
-    return this.protocol.getMyFingerprint();
+  async stopNetworking(): Promise<void> {
+    if (this.bitchat) {
+      await this.bitchat.stop();
+    }
   }
 
-  getConnectedPeers(): BitchatPeer[] {
-    return this.protocol.getPeers().filter((peer: BitchatPeer) => peer.isConnected);
+  getNetworks(): MeshNetwork[] {
+    return Array.from(this.networks.values());
+  }
+
+  getNetwork(id: string): MeshNetwork | undefined {
+    return this.networks.get(id);
+  }
+
+  getConnectedNodes(): MeshNode[] {
+    const defaultNetwork = this.getOrCreateNetwork('default');
+    return defaultNetwork.nodes.filter(node => node.isConnected);
+  }
+
+  async sendMessage(message: any, targetNodeId?: string): Promise<void> {
+    await this.initializeBitChat();
+    if (this.bitchat) {
+      if (targetNodeId) {
+        await this.bitchat.sendMessage(JSON.stringify(message), targetNodeId);
+      } else {
+        await this.bitchat.sendMessage(JSON.stringify(message));
+      }
+    }
   }
 }
 
-// Create singleton instance
-export const meshManager = new MeshNetworkManager();
+// Export default instance for compatibility
+let defaultManager: MeshNetworkManager | null = null;
 
-// Utility functions for mesh network UI
-export const meshUtils = {
-  getNetworkTopologyIcon: (topology: string): string => {
-    switch (topology) {
-      case 'star': return '⭐';
-      case 'mesh': return '🕸️';
-      case 'ring': return '🔗';
-      default: return '📡';
-    }
-  },
-  
-  formatSignalStrength: (signal: number): string => {
-    if (signal > 85) return 'Excellent';
-    if (signal > 75) return 'Strong';
-    if (signal > 50) return 'Good';
-    if (signal > 25) return 'Fair';
-    return 'Weak';
-  },
-  
-  getConnectionQualityColor: (signal: number): string => {
-    if (signal > 85) return 'text-green-400';
-    if (signal > 75) return 'text-blue-400';
-    if (signal > 50) return 'text-yellow-400';
-    if (signal > 25) return 'text-orange-400';
-    return 'text-red-400';
-  },
-  
-  formatNodeType: (nodeType?: string): string => {
-    switch (nodeType) {
-      case 'endpoint': return 'Peer';
-      case 'relay': return 'Relay Node';
-      case 'bridge': return 'Bridge Node';
-      default: return 'Unknown';
-    }
-  },
-  
-  getCapabilityIcon: (capability: string): string => {
-    switch (capability) {
-      case 'chat': return '💬';
-      case 'mesh': return '🕸️';
-      case 'encryption': return '🔒';
-      case 'noise-protocol': return '🛡️';
-      case 'relay': return '🔄';
-      default: return '⚡';
-    }
-  },
-  
-  isSecureConnection: (capabilities: string[]): boolean => {
-    return capabilities.includes('encryption') && capabilities.includes('noise-protocol');
-  },
-  
-  formatFingerprint: (fingerprint: string): string => {
-    // Format as groups of 4 characters for readability
-    return fingerprint.match(/.{1,4}/g)?.join(' ') || fingerprint;
+export function getMeshManager(): MeshNetworkManager {
+  if (!defaultManager) {
+    defaultManager = new MeshNetworkManager();
   }
-};
+  return defaultManager;
+}
+
+// Export instance directly for backward compatibility
+export const meshManager = getMeshManager();
+
+// Create a simple class for export default compatibility
+export class DefaultMeshNetwork implements MeshNetwork {
+  id = 'default';
+  name = 'Default Network';
+  nodes: MeshNode[] = [];
+  topology: 'star' | 'mesh' | 'ring' = 'mesh';
+}
+
+// Export the class as default
+export default DefaultMeshNetwork;

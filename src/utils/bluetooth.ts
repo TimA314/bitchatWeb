@@ -42,7 +42,42 @@ declare global {
     device: BluetoothDevice;
     connect(): Promise<BluetoothRemoteGATTServer>;
     disconnect(): void;
+    getPrimaryService(service: BluetoothServiceUUID): Promise<BluetoothRemoteGATTService>;
   }
+
+  interface BluetoothRemoteGATTService {
+    device: BluetoothDevice;
+    uuid: string;
+    isPrimary: boolean;
+    getCharacteristic(characteristic: BluetoothCharacteristicUUID): Promise<BluetoothRemoteGATTCharacteristic>;
+    getCharacteristics(characteristic?: BluetoothCharacteristicUUID): Promise<BluetoothRemoteGATTCharacteristic[]>;
+  }
+
+  interface BluetoothRemoteGATTCharacteristic extends EventTarget {
+    service: BluetoothRemoteGATTService;
+    uuid: string;
+    properties: BluetoothCharacteristicProperties;
+    value?: DataView;
+    readValue(): Promise<DataView>;
+    writeValue(value: BufferSource): Promise<void>;
+    startNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
+    stopNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
+  }
+
+  interface BluetoothCharacteristicProperties {
+    broadcast: boolean;
+    read: boolean;
+    writeWithoutResponse: boolean;
+    write: boolean;
+    notify: boolean;
+    indicate: boolean;
+    authenticatedSignedWrites: boolean;
+    reliableWrite: boolean;
+    writableAuxiliaries: boolean;
+  }
+
+  type BluetoothServiceUUID = number | string;
+  type BluetoothCharacteristicUUID = number | string;
 }
 
 export const getBrowserInfo = () => {

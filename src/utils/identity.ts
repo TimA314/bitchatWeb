@@ -1,70 +1,62 @@
-import { ed25519, x25519 } from '@noble/curves/ed25519';
-import { sha256 } from '@noble/hashes/sha2';
+// BitChat Identity Management
+// Simplified identity generation and management
 
-export interface Identity {
-  noiseStaticPrivate: Uint8Array;
-  noiseStaticPublic: Uint8Array;
-  signingPrivate: Uint8Array;
-  signingPublic: Uint8Array;
-  fingerprint: string;  // SHA-256 of noiseStaticPublic as hex
+export interface UserIdentity {
+  id: string;
+  nickname: string;
+  publicKey?: string;
+  fingerprint: string;
+  created: Date;
 }
 
-export function generateIdentity(): Identity {
-  // Generate Curve25519 key pair for Noise static keys
-  const noiseStaticPrivate = crypto.getRandomValues(new Uint8Array(32));
-  const noiseStaticPublic = x25519.getPublicKey(noiseStaticPrivate);
+// Generate a simple identity for now
+export function generateIdentity(nickname: string = 'Anonymous'): UserIdentity {
+  // Generate a simple ID based on timestamp and random
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 15);
+  const id = `${timestamp}-${random}`;
   
-  // Generate Ed25519 key pair for signing
-  const signingPrivate = crypto.getRandomValues(new Uint8Array(32));
-  const signingPublic = ed25519.getPublicKey(signingPrivate);
+  // Create a simple fingerprint
+  const fingerprint = btoa(`${nickname}-${id}`).substring(0, 16);
   
-  // Create fingerprint from Noise static public key
-  const fingerprintBytes = sha256(noiseStaticPublic);
-  const fingerprint = Array.from(fingerprintBytes)
-    .map((b) => (b as number).toString(16).padStart(2, '0'))
-    .join('');
-  
-  const identity = {
-    noiseStaticPrivate,
-    noiseStaticPublic,
-    signingPrivate,
-    signingPublic,
-    fingerprint
+  return {
+    id,
+    nickname,
+    fingerprint,
+    created: new Date()
   };
-  
-  // Persist to localStorage (should be encrypted in production)
-  const serialized = {
-    noiseStaticPrivate: Array.from(noiseStaticPrivate),
-    noiseStaticPublic: Array.from(noiseStaticPublic),
-    signingPrivate: Array.from(signingPrivate),
-    signingPublic: Array.from(signingPublic),
-    fingerprint
-  };
-  
-  localStorage.setItem('bitchat_identity', JSON.stringify(serialized));
-  
-  console.log('🔑 Generated new BitChat identity');
-  console.log('🔖 Fingerprint:', fingerprint);
-  
-  return identity;
 }
 
-export function loadIdentity(): Identity | null {
+// Get or create stored identity
+export function getStoredIdentity(): UserIdentity | null {
   try {
-    const stored = localStorage.getItem('bitchat_identity');
-    if (!stored) return null;
-    
-    const parsed = JSON.parse(stored);
-    
-    return {
-      noiseStaticPrivate: new Uint8Array(parsed.noiseStaticPrivate),
-      noiseStaticPublic: new Uint8Array(parsed.noiseStaticPublic),
-      signingPrivate: new Uint8Array(parsed.signingPrivate),
-      signingPublic: new Uint8Array(parsed.signingPublic),
-      fingerprint: parsed.fingerprint
-    };
+    const stored = localStorage.getItem('bitchat-identity');
+    if (stored) {
+      const identity = JSON.parse(stored);
+      identity.created = new Date(identity.created);
+      return identity;
+    }
   } catch (error) {
-    console.error('Failed to load identity:', error);
-    return null;
+    console.warn('Failed to load stored identity:', error);
   }
+  return null;
+}
+
+// Store identity
+export function storeIdentity(identity: UserIdentity): void {
+  try {
+    localStorage.setItem('bitchat-identity', JSON.stringify(identity));
+  } catch (error) {
+    console.warn('Failed to store identity:', error);
+  }
+}
+
+// Get or create identity
+export function getCurrentIdentity(): UserIdentity {
+  let identity = getStoredIdentity();
+  if (!identity) {
+    identity = generateIdentity();
+    storeIdentity(identity);
+  }
+  return identity;
 }
