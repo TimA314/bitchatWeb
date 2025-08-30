@@ -1,890 +1,838 @@
-// BitChat Protocol Implementation
-// A decentralized, peer-to-peer messaging protocol for secure communication
-// Follows BitChat Protocol Whitepaper v1.1 specification
+// BitChat Protocol v1.1 Implementation
+// Based on the BitChat Protocol Whitepaper
+// Implements the complete 4-layer protocol stack
 
-import { NoiseHandshakeProtocol, NoiseSession } from './noise-protocol';
+import type { Identity } from './identity';
+import { generateIdentity, loadIdentity } from './identity';
+import { NoiseSessionManager } from './noise-protocol';
+import { BluetoothTransport } from './bluetooth';
+import { v4 as uuidv4 } from 'uuid';
 
-// Extend the existing Bluetooth interfaces
-declare global {
-  interface BluetoothRemoteGATTServer {
-    getPrimaryService(service: BluetoothServiceUUID): Promise<BluetoothRemoteGATTService>;
-  }
-  
-  interface BluetoothRemoteGATTService {
-    getCharacteristic(characteristic: BluetoothServiceUUID): Promise<BluetoothRemoteGATTCharacteristic>;
-  }
-  
-  interface BluetoothRemoteGATTCharacteristic {
-    readValue(): Promise<DataView>;
-    writeValue(value: BufferSource): Promise<void>;
-    startNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
-    addEventListener(type: string, listener: EventListener): void;
-    removeEventListener(type: string, listener: EventListener): void;
-    value?: DataView;
-  }
-}
-
-// BitChat Protocol Constants
-export const BITCHAT_PROTOCOL = {
-  VERSION: 1,
-  SERVICE_UUID: '12345678-1234-5678-9abc-123456789abc',
-  CHARACTERISTIC_UUID: '87654321-4321-8765-cba9-987654321098',
-  NOISE_PROTOCOL: 'Noise_XX_25519_ChaChaPoly_SHA256',
-  MAX_TTL: 16,
-  BROADCAST_ID: new Uint8Array(8).fill(0xFF),
-  PADDING_SIZES: [256, 512, 1024, 2048]
-} as const;
-
-// Message Types (as per BitChat Protocol)
+// Message Types from BitChat Protocol specification
 export const MessageType = {
-  MESSAGE: 1,
-  DELIVERY_ACK: 2,
-  READ_RECEIPT: 3,
-  NOISE_HANDSHAKE_INIT: 4,
-  NOISE_HANDSHAKE_RESP: 5,
-  NOISE_HANDSHAKE_FINAL: 6,
-  FRAGMENT_START: 7,
-  FRAGMENT_CONTINUE: 8,
-  FRAGMENT_END: 9,
-  HEARTBEAT: 10,
-  PEER_ANNOUNCEMENT: 11
+  MESSAGE: 0x01,
+  DELIVERY_ACK: 0x02,
+  READ_RECEIPT: 0x03,
+  NOISE_HANDSHAKE_INIT: 0x10,
+  NOISE_HANDSHAKE_RESPONSE: 0x11,
+  NOISE_HANDSHAKE_FINAL: 0x12,
+  FRAGMENT_START: 0x20,
+  FRAGMENT_CONTINUE: 0x21,
+  FRAGMENT_END: 0x22,
+  ANNOUNCEMENT: 0x30,
+  PING: 0x40,
+  PONG: 0x41
 } as const;
 
-// Packet Flags
+export type MessageType = typeof MessageType[keyof typeof MessageType];
+
+// Packet flags bitmask
 export const PacketFlags = {
   HAS_RECIPIENT: 0x01,
   HAS_SIGNATURE: 0x02,
   IS_COMPRESSED: 0x04,
-  IS_FRAGMENTED: 0x08
+  IS_BROADCAST: 0x08
 } as const;
 
-// Core BitChat Protocol Types
-export interface BitchatPeer {
-  id: Uint8Array; // 8-byte peer ID (truncated from fingerprint)
-  fingerprint: Uint8Array; // SHA-256 hash of static public key
-  nickname: string;
-  staticPublicKey?: Uint8Array; // Curve25519 public key
-  signingPublicKey?: Uint8Array; // Ed25519 public key
-  device?: BluetoothDevice;
-  isConnected: boolean;
-  lastSeen: Date;
-  isVerified: boolean;
-  isFavorite: boolean;
-  isBlocked: boolean;
-  trustLevel: 'unknown' | 'verified' | 'trusted';
-}
+export type PacketFlags = typeof PacketFlags[keyof typeof PacketFlags];
 
+// BitChat Protocol Packet Structure
 export interface BitchatPacket {
-  // Fixed-size header (13 bytes)
-  version: number; // 1 byte
-  type: number; // 1 byte (MessageType)
-  ttl: number; // 1 byte
-  timestamp: bigint; // 8 bytes (UInt64)
-  flags: number; // 1 byte (PacketFlags bitmask)
-  payloadLength: number; // 2 bytes (UInt16)
-  
-  // Variable-size fields
+  version: number;
+  type: MessageType;
+  ttl: number;
+  timestamp: bigint;
+  flags: number;
+  payloadLength: number;
   senderId: Uint8Array; // 8 bytes
-  recipientId?: Uint8Array; // 8 bytes (optional, based on HAS_RECIPIENT flag)
-  payload: Uint8Array; // Variable length
-  signature?: Uint8Array; // 64 bytes (optional, based on HAS_SIGNATURE flag)
+  recipientId?: Uint8Array; // 8 bytes, optional
+  payload: Uint8Array;
+  signature?: Uint8Array; // 64 bytes Ed25519 signature, optional
 }
 
+// Application layer message structure
 export interface BitchatMessage {
-  flags: number; // 1 byte
-  timestamp: bigint; // 8 bytes
-  id: string; // UUID
-  sender: string; // Nickname
-  content: string; // UTF-8 message content
+  flags: number;
+  timestamp: bigint;
+  id: string;
+  sender: string;
+  content: string;
   originalSender?: string; // For relay messages
   recipientNickname?: string; // For private messages
 }
 
+// Delivery acknowledgment structure
 export interface DeliveryAck {
   messageId: string;
   timestamp: bigint;
+  recipientFingerprint: string;
 }
 
-export interface ReadReceipt {
-  messageId: string;
-  timestamp: bigint;
+// Peer information
+export interface BitchatPeer {
+  fingerprint: string;
+  nickname: string;
+  noiseStaticPublic: Uint8Array;
+  lastSeen: Date;
+  isConnected: boolean;
+  isVerified: boolean;
+  isFavorite: boolean;
+  isBlocked: boolean;
+  trustLevel: number; // 0-100
 }
 
-// Optimized Bloom Filter for packet deduplication
-export class OptimizedBloomFilter {
-  private bitArray: Uint8Array;
+// Optimized Bloom Filter for duplicate detection
+class OptimizedBloomFilter {
+  private bits: Uint32Array;
   private size: number;
   private hashCount: number;
-  
+
   constructor(expectedElements: number = 10000, falsePositiveRate: number = 0.01) {
-    this.size = Math.ceil((-expectedElements * Math.log(falsePositiveRate)) / (Math.log(2) ** 2));
-    this.hashCount = Math.ceil((this.size / expectedElements) * Math.log(2));
-    this.bitArray = new Uint8Array(Math.ceil(this.size / 8));
+    this.size = Math.ceil((-expectedElements * Math.log(falsePositiveRate)) / (Math.LN2 * Math.LN2));
+    this.hashCount = Math.ceil((this.size / expectedElements) * Math.LN2);
+    this.bits = new Uint32Array(Math.ceil(this.size / 32));
   }
-  
-  private hash(data: string, seed: number): number {
-    let hash = seed;
-    for (let i = 0; i < data.length; i++) {
-      hash = ((hash << 5) - hash + data.charCodeAt(i)) & 0xffffffff;
-    }
-    return Math.abs(hash) % this.size;
-  }
-  
+
   add(item: string): void {
-    for (let i = 0; i < this.hashCount; i++) {
-      const index = this.hash(item, i);
-      const byteIndex = Math.floor(index / 8);
-      const bitIndex = index % 8;
-      this.bitArray[byteIndex] |= (1 << bitIndex);
+    const hashes = this.getHashes(item);
+    for (const hash of hashes) {
+      const index = hash % this.size;
+      const wordIndex = Math.floor(index / 32);
+      const bitIndex = index % 32;
+      this.bits[wordIndex] |= (1 << bitIndex);
     }
   }
-  
+
   contains(item: string): boolean {
-    for (let i = 0; i < this.hashCount; i++) {
-      const index = this.hash(item, i);
-      const byteIndex = Math.floor(index / 8);
-      const bitIndex = index % 8;
-      if (!(this.bitArray[byteIndex] & (1 << bitIndex))) {
+    const hashes = this.getHashes(item);
+    for (const hash of hashes) {
+      const index = hash % this.size;
+      const wordIndex = Math.floor(index / 32);
+      const bitIndex = index % 32;
+      if ((this.bits[wordIndex] & (1 << bitIndex)) === 0) {
         return false;
       }
     }
     return true;
   }
+
+  private getHashes(item: string): number[] {
+    const hashes: number[] = [];
+    let hash1 = this.djb2Hash(item);
+    let hash2 = this.sdbmHash(item);
+    
+    for (let i = 0; i < this.hashCount; i++) {
+      hashes.push(Math.abs(hash1 + i * hash2));
+    }
+    return hashes;
+  }
+
+  private djb2Hash(str: string): number {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    }
+    return hash;
+  }
+
+  private sdbmHash(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + (hash << 6) + (hash << 16) - hash;
+    }
+    return hash;
+  }
+}
+
+// Message Retry Service for reliability
+class MessageRetryService {
+  private pendingMessages: Map<string, {
+    packet: BitchatPacket;
+    retryCount: number;
+    lastSent: Date;
+    maxRetries: number;
+  }> = new Map();
   
-  clear(): void {
-    this.bitArray.fill(0);
+  private retryInterval: number = 5000; // 5 seconds
+  private maxRetries: number = 3;
+
+  addMessage(messageId: string, packet: BitchatPacket): void {
+    this.pendingMessages.set(messageId, {
+      packet,
+      retryCount: 0,
+      lastSent: new Date(),
+      maxRetries: this.maxRetries
+    });
+  }
+
+  acknowledgeMessage(messageId: string): void {
+    this.pendingMessages.delete(messageId);
+  }
+
+  getMessagesToRetry(): BitchatPacket[] {
+    const now = new Date();
+    const toRetry: BitchatPacket[] = [];
+
+    for (const [messageId, pending] of this.pendingMessages.entries()) {
+      const timeSinceLastSent = now.getTime() - pending.lastSent.getTime();
+      
+      if (timeSinceLastSent >= this.retryInterval) {
+        if (pending.retryCount < pending.maxRetries) {
+          pending.retryCount++;
+          pending.lastSent = now;
+          toRetry.push(pending.packet);
+        } else {
+          // Max retries reached, remove from pending
+          this.pendingMessages.delete(messageId);
+        }
+      }
+    }
+
+    return toRetry;
   }
 }
 
 // Secure Identity State Manager
 export class SecureIdentityStateManager {
   private peers: Map<string, BitchatPeer> = new Map();
-  private ownKeys: {
-    staticKeyPair?: CryptoKeyPair;
-    signingKeyPair?: CryptoKeyPair;
-    fingerprint?: Uint8Array;
-  } = {};
-  
-  async initialize(): Promise<void> {
-    await this.generateOrLoadKeys();
+  private identity: Identity | null = null;
+
+  constructor() {
+    this.loadIdentity();
   }
-  
-  private async generateOrLoadKeys(): Promise<void> {
-    try {
-      // Generate Curve25519 static key pair for Noise protocol
-      this.ownKeys.staticKeyPair = await crypto.subtle.generateKey(
-        {
-          name: 'X25519'
-        } as any,
-        true,
-        ['deriveKey', 'deriveBits']
-      );
-      
-      // Generate Ed25519 signing key pair
-      this.ownKeys.signingKeyPair = await crypto.subtle.generateKey(
-        {
-          name: 'Ed25519'
-        } as any,
-        true,
-        ['sign', 'verify']
-      );
-      
-      // Generate fingerprint from static public key
-      const staticPublicKeyBytes = await crypto.subtle.exportKey('raw', this.ownKeys.staticKeyPair.publicKey);
-      const fingerprintBuffer = await crypto.subtle.digest('SHA-256', staticPublicKeyBytes);
-      this.ownKeys.fingerprint = new Uint8Array(fingerprintBuffer);
-    } catch (error) {
-      console.warn('Advanced crypto not available, using fallback', error);
-      // Fallback for browsers without X25519/Ed25519 support
-      this.ownKeys.fingerprint = new Uint8Array(32);
-      crypto.getRandomValues(this.ownKeys.fingerprint);
+
+  private loadIdentity(): void {
+    this.identity = loadIdentity();
+    if (!this.identity) {
+      this.identity = generateIdentity();
     }
   }
-  
-  getFingerprint(): Uint8Array | undefined {
-    return this.ownKeys.fingerprint;
+
+  getMyIdentity(): Identity {
+    if (!this.identity) {
+      throw new Error('Identity not initialized');
+    }
+    return this.identity;
   }
-  
-  getStaticPublicKey(): CryptoKey | undefined {
-    return this.ownKeys.staticKeyPair?.publicKey;
-  }
-  
-  getStaticPrivateKey(): CryptoKey | undefined {
-    return this.ownKeys.staticKeyPair?.privateKey;
-  }
-  
+
   addPeer(peer: BitchatPeer): void {
-    const peerId = this.bytesToHex(peer.id);
-    this.peers.set(peerId, peer);
+    this.peers.set(peer.fingerprint, peer);
   }
-  
-  getPeer(peerId: Uint8Array): BitchatPeer | undefined {
-    const peerIdHex = this.bytesToHex(peerId);
-    return this.peers.get(peerIdHex);
+
+  getPeer(fingerprint: string): BitchatPeer | undefined {
+    return this.peers.get(fingerprint);
   }
-  
+
   getAllPeers(): BitchatPeer[] {
     return Array.from(this.peers.values());
   }
-  
-  verifyPeer(peerId: Uint8Array): void {
-    const peer = this.getPeer(peerId);
+
+  markPeerAsVerified(fingerprint: string): void {
+    const peer = this.peers.get(fingerprint);
     if (peer) {
       peer.isVerified = true;
-      peer.trustLevel = 'verified';
     }
   }
-  
-  blockPeer(peerId: Uint8Array): void {
-    const peer = this.getPeer(peerId);
+
+  togglePeerFavorite(fingerprint: string): void {
+    const peer = this.peers.get(fingerprint);
+    if (peer) {
+      peer.isFavorite = !peer.isFavorite;
+    }
+  }
+
+  blockPeer(fingerprint: string): void {
+    const peer = this.peers.get(fingerprint);
     if (peer) {
       peer.isBlocked = true;
     }
   }
-  
-  private bytesToHex(bytes: Uint8Array): string {
-    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+
+  unblockPeer(fingerprint: string): void {
+    const peer = this.peers.get(fingerprint);
+    if (peer) {
+      peer.isBlocked = false;
+    }
+  }
+
+  isPeerBlocked(fingerprint: string): boolean {
+    const peer = this.peers.get(fingerprint);
+    return peer?.isBlocked || false;
   }
 }
 
-// BitChat Packet Serialization
-export class BitchatPacketSerializer {
-  static serialize(packet: BitchatPacket): ArrayBuffer {
-    const hasRecipient = !!(packet.flags & PacketFlags.HAS_RECIPIENT);
-    const hasSignature = !!(packet.flags & PacketFlags.HAS_SIGNATURE);
-    
-    // Calculate total size
-    let totalSize = 13; // Fixed header
-    totalSize += 8; // senderId
-    if (hasRecipient) totalSize += 8; // recipientId
-    totalSize += packet.payload.length;
-    if (hasSignature) totalSize += 64; // signature
-    
-    // Add padding to next standard block size
-    const paddedSize = BITCHAT_PROTOCOL.PADDING_SIZES.find(size => size >= totalSize) || 2048;
-    
-    const buffer = new ArrayBuffer(paddedSize);
-    const view = new DataView(buffer);
-    let offset = 0;
-    
-    // Fixed header (13 bytes)
-    view.setUint8(offset, packet.version); offset += 1;
-    view.setUint8(offset, packet.type); offset += 1;
-    view.setUint8(offset, packet.ttl); offset += 1;
-    view.setBigUint64(offset, packet.timestamp, false); offset += 8;
-    view.setUint8(offset, packet.flags); offset += 1;
-    view.setUint16(offset, packet.payloadLength, false); offset += 2;
-    
-    // Variable fields
-    new Uint8Array(buffer, offset, 8).set(packet.senderId); offset += 8;
-    
-    if (hasRecipient && packet.recipientId) {
-      new Uint8Array(buffer, offset, 8).set(packet.recipientId); offset += 8;
-    }
-    
-    new Uint8Array(buffer, offset, packet.payload.length).set(packet.payload); offset += packet.payload.length;
-    
-    if (hasSignature && packet.signature) {
-      new Uint8Array(buffer, offset, 64).set(packet.signature); offset += 64;
-    }
-    
-    // PKCS#7 style padding
-    const paddingLength = paddedSize - totalSize;
-    if (paddingLength > 0) {
-      const padding = new Uint8Array(paddingLength).fill(paddingLength);
-      new Uint8Array(buffer, offset, paddingLength).set(padding);
-    }
-    
-    return buffer;
-  }
-  
-  static deserialize(data: Uint8Array): BitchatPacket {
-    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    let offset = 0;
-    
-    // Parse fixed header
-    const version = view.getUint8(offset); offset += 1;
-    const type = view.getUint8(offset); offset += 1;
-    const ttl = view.getUint8(offset); offset += 1;
-    const timestamp = view.getBigUint64(offset, false); offset += 8;
-    const flags = view.getUint8(offset); offset += 1;
-    const payloadLength = view.getUint16(offset, false); offset += 2;
-    
-    // Parse variable fields
-    const senderId = new Uint8Array(data.buffer, data.byteOffset + offset, 8); offset += 8;
-    
-    let recipientId: Uint8Array | undefined;
-    if (flags & PacketFlags.HAS_RECIPIENT) {
-      recipientId = new Uint8Array(data.buffer, data.byteOffset + offset, 8); offset += 8;
-    }
-    
-    const payload = new Uint8Array(data.buffer, data.byteOffset + offset, payloadLength); offset += payloadLength;
-    
-    let signature: Uint8Array | undefined;
-    if (flags & PacketFlags.HAS_SIGNATURE) {
-      signature = new Uint8Array(data.buffer, data.byteOffset + offset, 64);
-    }
-    
-    return {
-      version,
-      type,
-      ttl,
-      timestamp,
-      flags,
-      payloadLength,
-      senderId,
-      recipientId,
-      payload,
-      signature
-    };
-  }
-}
-
-// Main BitChat Protocol Manager
-export class BitChatProtocolManager extends EventTarget {
+// Main BitChat Protocol Implementation
+export class BitChatProtocol extends EventTarget {
   private identityManager: SecureIdentityStateManager;
+  private noiseSessionManager: NoiseSessionManager;
   private bloomFilter: OptimizedBloomFilter;
-  private connectedPeers: Map<string, BluetoothDevice> = new Map();
-  private noiseSessions: Map<string, NoiseSession> = new Map();
-  
+  private retryService: MessageRetryService;
+  private transport: BluetoothTransport;
+  private isRunning: boolean = false;
+
   constructor() {
     super();
     this.identityManager = new SecureIdentityStateManager();
+    this.noiseSessionManager = new NoiseSessionManager();
     this.bloomFilter = new OptimizedBloomFilter();
-  }
-  
-  async initialize(): Promise<void> {
-    await this.identityManager.initialize();
-  }
-  
-  // Scan for BitChat peers using Bluetooth
-  async scanForPeers(): Promise<BitchatPeer[]> {
-    if (!navigator.bluetooth) {
-      throw new Error('Web Bluetooth not supported');
-    }
+    this.retryService = new MessageRetryService();
+    this.transport = new BluetoothTransport();
     
-    try {
-      const device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [BITCHAT_PROTOCOL.SERVICE_UUID] }],
-        optionalServices: [BITCHAT_PROTOCOL.SERVICE_UUID]
-      });
-      
-      if (!device.gatt) {
-        throw new Error('GATT not available');
-      }
-      
-      const server = await device.gatt.connect();
-      const service = await server.getPrimaryService(BITCHAT_PROTOCOL.SERVICE_UUID);
-      const characteristic = await service.getCharacteristic(BITCHAT_PROTOCOL.CHARACTERISTIC_UUID);
-      
-      // Start listening for announcements
-      await characteristic.startNotifications();
-      characteristic.addEventListener('characteristicvaluechanged', (event: Event) => {
-        this.handleIncomingData(event as any);
-      });
-      
-      // Send our own announcement
-      await this.sendPeerAnnouncement(characteristic);
-      
-      return this.identityManager.getAllPeers();
-    } catch (error) {
-      console.error('Failed to scan for peers:', error);
-      throw error;
-    }
+    this.setupTransportListeners();
+    this.startRetryService();
   }
-  
-  // Connect to a specific peer
-  async connectToPeer(peer: BitchatPeer): Promise<boolean> {
-    if (!peer.device || peer.isBlocked) {
-      return false;
-    }
-    
-    try {
-      if (!peer.device.gatt) {
-        throw new Error('GATT not available');
-      }
-      
-      const server = await peer.device.gatt.connect();
-      const service = await server.getPrimaryService(BITCHAT_PROTOCOL.SERVICE_UUID);
-      const characteristic = await service.getCharacteristic(BITCHAT_PROTOCOL.CHARACTERISTIC_UUID);
-      
-      // Initialize Noise handshake
-      await this.initiateNoiseHandshake(characteristic, peer);
-      
-      peer.isConnected = true;
-      peer.lastSeen = new Date();
-      
-      this.dispatchEvent(new CustomEvent('peerConnected', { detail: peer }));
-      return true;
-    } catch (error) {
-      console.error('Failed to connect to peer:', error);
-      return false;
-    }
+
+  private setupTransportListeners(): void {
+    this.transport.addEventListener('dataReceived', (event: any) => {
+      this.handleIncomingData(event.detail.data, event.detail.peerId);
+    });
+
+    this.transport.addEventListener('peerConnected', (event: any) => {
+      this.handlePeerConnected(event.detail.peerId);
+    });
+
+    this.transport.addEventListener('peerDisconnected', (event: any) => {
+      this.handlePeerDisconnected(event.detail.peerId);
+    });
   }
-  
-  // Send a chat message
-  async sendMessage(content: string, recipientId?: Uint8Array): Promise<string> {
-    const messageId = crypto.randomUUID();
-    const ownFingerprint = this.identityManager.getFingerprint();
-    if (!ownFingerprint) {
-      throw new Error('Identity not initialized');
-    }
+
+  async start(): Promise<void> {
+    if (this.isRunning) return;
     
+    await this.transport.initialize();
+    this.isRunning = true;
+    
+    console.log('🚀 BitChat Protocol started');
+    this.dispatchEvent(new CustomEvent('protocolStarted'));
+  }
+
+  async stop(): Promise<void> {
+    if (!this.isRunning) return;
+    
+    await this.transport.shutdown();
+    this.isRunning = false;
+    
+    console.log('🛑 BitChat Protocol stopped');
+    this.dispatchEvent(new CustomEvent('protocolStopped'));
+  }
+
+  // Send a message using the BitChat protocol
+  async sendMessage(content: string, recipientFingerprint?: string, isPrivate: boolean = false): Promise<string> {
+    const identity = this.identityManager.getMyIdentity();
+    const messageId = uuidv4();
+    
+    // Create BitchatMessage
     const message: BitchatMessage = {
-      flags: 0,
+      flags: isPrivate ? 0x02 : 0x00, // Set private flag
       timestamp: BigInt(Date.now()),
       id: messageId,
-      sender: this.getUserNickname(), // Use real nickname
+      sender: 'Anonymous', // TODO: Implement nickname system
       content,
-      recipientNickname: recipientId ? this.identityManager.getPeer(recipientId)?.nickname : undefined
+      recipientNickname: recipientFingerprint ? this.identityManager.getPeer(recipientFingerprint)?.nickname : undefined
     };
+
+    // Serialize message
+    const payload = this.serializeBitchatMessage(message);
     
+    // Create packet
     const packet: BitchatPacket = {
-      version: BITCHAT_PROTOCOL.VERSION,
+      version: 1,
       type: MessageType.MESSAGE,
-      ttl: BITCHAT_PROTOCOL.MAX_TTL,
+      ttl: 8, // Default TTL
       timestamp: BigInt(Date.now()),
-      flags: recipientId ? PacketFlags.HAS_RECIPIENT : 0,
-      payloadLength: 0, // Will be set during serialization
-      senderId: ownFingerprint.slice(0, 8),
-      recipientId: recipientId,
-      payload: this.serializeMessage(message)
+      flags: recipientFingerprint ? PacketFlags.HAS_RECIPIENT : PacketFlags.IS_BROADCAST,
+      payloadLength: payload.length,
+      senderId: this.truncateFingerprint(identity.fingerprint),
+      recipientId: recipientFingerprint ? this.truncateFingerprint(recipientFingerprint) : undefined,
+      payload
     };
+
+    // Add to retry service for private messages
+    if (isPrivate && recipientFingerprint) {
+      this.retryService.addMessage(messageId, packet);
+    }
+
+    // Send packet
+    await this.sendPacket(packet, recipientFingerprint);
     
-    packet.payloadLength = packet.payload.length;
-    
-    await this.broadcastPacket(packet);
     return messageId;
   }
-  
-  // Broadcast our presence to make device discoverable
-  async broadcastPresence(nickname: string): Promise<void> {
-    const ownFingerprint = this.identityManager.getFingerprint();
-    if (!ownFingerprint) {
-      throw new Error('Identity not initialized');
-    }
+
+  private async sendPacket(packet: BitchatPacket, recipientFingerprint?: string): Promise<void> {
+    const serialized = this.serializePacket(packet);
     
-    console.log(`📡 Broadcasting BitChat presence as: ${nickname}`);
-    
-    const announcement = {
-      nickname: nickname,
-      fingerprint: Array.from(ownFingerprint),
-      timestamp: Date.now(),
-      capabilities: ['bitchat-v1.1', 'noise-xx', 'web-browser'],
-      version: BITCHAT_PROTOCOL.VERSION,
-      transport: ['web-bluetooth', 'webrtc']
-    };
-    
-    const packet: BitchatPacket = {
-      version: BITCHAT_PROTOCOL.VERSION,
-      type: MessageType.PEER_ANNOUNCEMENT,
-      ttl: 3, // Allow some propagation for discovery
-      timestamp: BigInt(Date.now()),
-      flags: 0, // Broadcast message
-      payloadLength: 0,
-      senderId: ownFingerprint.slice(0, 8),
-      payload: new TextEncoder().encode(JSON.stringify(announcement))
-    };
-    
-    packet.payloadLength = packet.payload.length;
-    
-    try {
-      await this.broadcastPacket(packet);
-      console.log('✅ BitChat presence announcement broadcast successfully');
-    } catch (error) {
-      console.error('❌ Failed to broadcast presence:', error);
-      throw error;
-    }
-  }
-  
-  private getUserNickname(): string {
-    // Get nickname from localStorage or generate one
-    const stored = localStorage.getItem('bitchat-nickname');
-    if (stored) return stored;
-    
-    // Generate a unique nickname based on browser/device info
-    const platform = navigator.platform || 'Unknown';
-    const userAgent = navigator.userAgent || '';
-    
-    let nickname: string;
-    if (userAgent.includes('Mobile')) {
-      nickname = `Mobile-${platform.slice(0, 3)}-${Date.now().toString().slice(-4)}`;
-    } else if (userAgent.includes('Electron')) {
-      nickname = `Desktop-${platform.slice(0, 3)}-${Date.now().toString().slice(-4)}`;
-    } else {
-      nickname = `Web-${platform.slice(0, 3)}-${Date.now().toString().slice(-4)}`;
-    }
-    
-    // Store for consistency
-    localStorage.setItem('bitchat-nickname', nickname);
-    return nickname;
-  }
-  
-  private async sendPeerAnnouncement(characteristic: BluetoothRemoteGATTCharacteristic): Promise<void> {
-    const ownFingerprint = this.identityManager.getFingerprint();
-    if (!ownFingerprint) return;
-    
-    const nickname = this.getUserNickname();
-    console.log(`📡 Sending peer announcement as: ${nickname}`);
-    
-    const announcement = {
-      nickname: nickname,
-      fingerprint: Array.from(ownFingerprint), // Convert to array for JSON
-      timestamp: Date.now(),
-      capabilities: ['bitchat-v1.1', 'noise-xx', 'web-bluetooth'],
-      version: BITCHAT_PROTOCOL.VERSION
-    };
-    
-    const packet: BitchatPacket = {
-      version: BITCHAT_PROTOCOL.VERSION,
-      type: MessageType.PEER_ANNOUNCEMENT,
-      ttl: 1, // Don't propagate announcements during handshake
-      timestamp: BigInt(Date.now()),
-      flags: 0,
-      payloadLength: 0,
-      senderId: ownFingerprint.slice(0, 8),
-      payload: new TextEncoder().encode(JSON.stringify(announcement))
-    };
-    
-    packet.payloadLength = packet.payload.length;
-    const serialized = BitchatPacketSerializer.serialize(packet);
-    await characteristic.writeValue(serialized);
-  }
-  
-  private async initiateNoiseHandshake(characteristic: BluetoothRemoteGATTCharacteristic, peer: BitchatPeer): Promise<void> {
-    console.log('🤝 Initiating Noise XX handshake with', peer.nickname);
-    
-    const ownFingerprint = this.identityManager.getFingerprint();
-    if (!ownFingerprint) {
-      throw new Error('Identity not initialized');
-    }
-    
-    // Generate static keypair (simplified for demo)
-    const staticKeypair = {
-      publicKey: new Uint8Array(32),
-      privateKey: new Uint8Array(32)
-    };
-    crypto.getRandomValues(staticKeypair.publicKey);
-    crypto.getRandomValues(staticKeypair.privateKey);
-    
-    // Initialize Noise handshake as initiator
-    const handshakeState = new NoiseHandshakeProtocol(true);
-    await handshakeState.initialize(staticKeypair);
-    
-    try {
-      // Step 1: Send initial handshake message (-> e)
-      const initialPayload = new TextEncoder().encode(JSON.stringify({
-        version: BITCHAT_PROTOCOL.VERSION,
-        nickname: this.getUserNickname() // Use real nickname
-      }));
-      
-      const message1 = await handshakeState.writeMessage(initialPayload);
-      
-      const handshakePacket: BitchatPacket = {
-        version: BITCHAT_PROTOCOL.VERSION,
-        type: MessageType.NOISE_HANDSHAKE_INIT,
-        ttl: 1,
-        timestamp: BigInt(Date.now()),
-        flags: PacketFlags.HAS_RECIPIENT,
-        payloadLength: message1.length,
-        senderId: ownFingerprint.slice(0, 8),
-        recipientId: peer.id,
-        payload: message1
-      };
-      
-      const serialized = BitchatPacketSerializer.serialize(handshakePacket);
-      await characteristic.writeValue(serialized);
-      
-      console.log('📤 Sent Noise handshake initialization');
-      
-      // Create and store session for this peer
-      const peerId = this.bytesToHex(peer.id);
-      const session = new NoiseSession(peerId);
-      this.noiseSessions.set(peerId, session);
-      
-      // TODO: Wait for response and complete handshake
-      // This would involve listening for NOISE_HANDSHAKE_RESP and NOISE_HANDSHAKE_FINAL
-      
-    } catch (error) {
-      console.error('❌ Noise handshake failed:', error);
-      throw error;
-    }
-  }
-  
-  private handleIncomingData(event: any): void {
-    const characteristic = event.target as BluetoothRemoteGATTCharacteristic;
-    if (!characteristic.value) return;
-    
-    try {
-      const data = new Uint8Array(characteristic.value.buffer);
-      const packet = BitchatPacketSerializer.deserialize(data);
-      
-      // Check if packet was already seen (bloom filter)
-      const packetId = this.getPacketId(packet);
-      if (this.bloomFilter.contains(packetId)) {
-        return; // Already processed
+    if (recipientFingerprint) {
+      // Private message - encrypt with Noise session
+      const session = await this.noiseSessionManager.getOrCreateSession(recipientFingerprint);
+      if (session && session.isSessionEstablished()) {
+        const encrypted = session.encryptTransportMessage(serialized);
+        await this.transport.sendToDevice(recipientFingerprint, encrypted);
+      } else {
+        // Need to establish session first
+        await this.initiateHandshake(recipientFingerprint);
+        // Queue message for later
       }
-      this.bloomFilter.add(packetId);
-      
-      // Check if sender is blocked
-      const sender = this.identityManager.getPeer(packet.senderId);
-      if (sender?.isBlocked) {
+    } else {
+      // Broadcast message
+      await this.transport.broadcast(serialized);
+    }
+  }
+
+  private async handleIncomingData(data: Uint8Array, peerId: string): Promise<void> {
+    try {
+      // Check if peer is blocked
+      if (this.identityManager.isPeerBlocked(peerId)) {
+        console.log('🚫 Ignoring packet from blocked peer:', peerId);
         return;
       }
+
+      // Try to decrypt if it's a Noise transport message
+      const session = this.noiseSessionManager.getSession(peerId);
+      let decryptedData = data;
       
-      this.processPacket(packet);
-      
-      // Relay packet if TTL > 0 and not for us
-      if (packet.ttl > 0 && !this.isPacketForUs(packet)) {
-        this.relayPacket(packet);
+      if (session && session.isSessionEstablished()) {
+        try {
+          decryptedData = session.decryptTransportMessage(data);
+        } catch (error) {
+          console.warn('Failed to decrypt transport message:', error);
+          return;
+        }
       }
+
+      const packet = this.deserializePacket(decryptedData);
+      if (!packet) return;
+
+      // Check bloom filter for duplicates
+      const packetId = this.getPacketId(packet);
+      if (this.bloomFilter.contains(packetId)) {
+        console.log('🔄 Duplicate packet detected, ignoring');
+        return;
+      }
+      this.bloomFilter.add(packetId);
+
+      // Process packet based on type
+      await this.processPacket(packet, peerId);
+
+      // Relay packet if TTL > 0 and not destined for us
+      if (packet.ttl > 0 && !this.isPacketForMe(packet)) {
+        await this.relayPacket(packet, peerId);
+      }
+
     } catch (error) {
-      console.error('Failed to process incoming data:', error);
+      console.error('Error handling incoming data:', error);
     }
   }
-  
-  private processPacket(packet: BitchatPacket): void {
+
+  private async processPacket(packet: BitchatPacket, fromPeerId: string): Promise<void> {
     switch (packet.type) {
       case MessageType.MESSAGE:
-        this.handleChatMessage(packet);
-        break;
-      case MessageType.PEER_ANNOUNCEMENT:
-        this.handlePeerAnnouncement(packet);
+        await this.handleMessagePacket(packet, fromPeerId);
         break;
       case MessageType.DELIVERY_ACK:
         this.handleDeliveryAck(packet);
         break;
-      case MessageType.READ_RECEIPT:
-        this.handleReadReceipt(packet);
-        break;
       case MessageType.NOISE_HANDSHAKE_INIT:
-      case MessageType.NOISE_HANDSHAKE_RESP:
+      case MessageType.NOISE_HANDSHAKE_RESPONSE:
       case MessageType.NOISE_HANDSHAKE_FINAL:
-        this.handleNoiseHandshake(packet);
+        await this.handleHandshakePacket(packet, fromPeerId);
+        break;
+      case MessageType.ANNOUNCEMENT:
+        this.handleAnnouncement(packet, fromPeerId);
         break;
       default:
         console.log('Unknown packet type:', packet.type);
     }
   }
-  
-  private handleChatMessage(packet: BitchatPacket): void {
-    try {
-      const message = this.deserializeMessage(packet.payload);
-      this.dispatchEvent(new CustomEvent('messageReceived', {
-        detail: { message, senderId: packet.senderId }
-      }));
-      
-      // Send delivery acknowledgment if it's a private message
-      if (packet.recipientId && this.isPacketForUs(packet)) {
-        this.sendDeliveryAck(message.id, packet.senderId);
-      }
-    } catch (error) {
-      console.error('Failed to handle chat message:', error);
+
+  private async handleMessagePacket(packet: BitchatPacket, fromPeerId: string): Promise<void> {
+    const message = this.deserializeBitchatMessage(packet.payload);
+    if (!message) return;
+
+    // If it's a private message for us, send delivery ack
+    if (this.isPacketForMe(packet) && packet.recipientId) {
+      await this.sendDeliveryAck(message.id, fromPeerId);
+    }
+
+    // Emit message event
+    this.dispatchEvent(new CustomEvent('messageReceived', {
+      detail: { message, packet, fromPeerId }
+    }));
+  }
+
+  private handleDeliveryAck(_packet: BitchatPacket): void {
+    // TODO: Deserialize delivery ack and remove from retry service
+    console.log('📨 Delivery acknowledgment received');
+  }
+
+  private async handleHandshakePacket(packet: BitchatPacket, fromPeerId: string): Promise<void> {
+    await this.noiseSessionManager.processHandshakeMessage(fromPeerId, packet.payload);
+  }
+
+  private handleAnnouncement(_packet: BitchatPacket, fromPeerId: string): void {
+    // TODO: Handle peer announcements
+    console.log('📢 Announcement received from:', fromPeerId);
+  }
+
+  private async relayPacket(packet: BitchatPacket, excludePeer: string): Promise<void> {
+    // Decrement TTL
+    packet.ttl--;
+    
+    if (packet.ttl > 0) {
+      const serialized = this.serializePacket(packet);
+      await this.transport.relayToAll(serialized, excludePeer);
     }
   }
-  
-  private handlePeerAnnouncement(packet: BitchatPacket): void {
-    try {
-      const announcement = JSON.parse(new TextDecoder().decode(packet.payload));
-      
-      const peer: BitchatPeer = {
-        id: packet.senderId,
-        fingerprint: new Uint8Array(announcement.fingerprint),
-        nickname: announcement.nickname,
-        isConnected: false,
-        lastSeen: new Date(),
-        isVerified: false,
-        isFavorite: false,
-        isBlocked: false,
-        trustLevel: 'unknown'
-      };
-      
-      this.identityManager.addPeer(peer);
-      this.dispatchEvent(new CustomEvent('peerDiscovered', { detail: peer }));
-    } catch (error) {
-      console.error('Failed to handle peer announcement:', error);
-    }
-  }
-  
-  private handleDeliveryAck(packet: BitchatPacket): void {
-    try {
-      const ack = JSON.parse(new TextDecoder().decode(packet.payload));
-      this.dispatchEvent(new CustomEvent('deliveryAck', { detail: ack }));
-    } catch (error) {
-      console.error('Failed to handle delivery ack:', error);
-    }
-  }
-  
-  private handleReadReceipt(packet: BitchatPacket): void {
-    try {
-      const receipt = JSON.parse(new TextDecoder().decode(packet.payload));
-      this.dispatchEvent(new CustomEvent('readReceipt', { detail: receipt }));
-    } catch (error) {
-      console.error('Failed to handle read receipt:', error);
-    }
-  }
-  
-  private handleNoiseHandshake(packet: BitchatPacket): void {
-    console.log('🤝 Received Noise handshake packet:', packet.type);
-    
-    try {
-      const senderId = this.bytesToHex(packet.senderId);
-      
-      switch (packet.type) {
-        case MessageType.NOISE_HANDSHAKE_INIT:
-          this.handleNoiseHandshakeInit(packet);
-          break;
-          
-        case MessageType.NOISE_HANDSHAKE_RESP:
-          this.handleNoiseHandshakeResponse(packet);
-          break;
-          
-        case MessageType.NOISE_HANDSHAKE_FINAL:
-          this.handleNoiseHandshakeFinal(packet);
-          break;
-          
-        default:
-          console.warn('Unknown Noise handshake type:', packet.type);
-      }
-    } catch (error) {
-      console.error('❌ Failed to handle Noise handshake:', error);
-    }
-  }
-  
-  private async handleNoiseHandshakeInit(packet: BitchatPacket): Promise<void> {
-    console.log('📥 Handling Noise handshake initialization');
-    
-    // TODO: Implement responder side of Noise XX handshake
-    // This would involve:
-    // 1. Creating a responder handshake state
-    // 2. Reading the initiator's message
-    // 3. Sending the response message (<- e, ee, s, es)
-    
-    const ownFingerprint = this.identityManager.getFingerprint();
-    if (!ownFingerprint) return;
-    
-    // For now, just acknowledge receipt
-    console.log('🔄 Noise handshake init received from peer');
-  }
-  
-  private async handleNoiseHandshakeResponse(packet: BitchatPacket): Promise<void> {
-    console.log('📥 Handling Noise handshake response');
-    
-    // TODO: Complete the handshake as initiator
-    // This would involve:
-    // 1. Reading the responder's message
-    // 2. Sending the final message (-> s, se)
-    // 3. Deriving the session keys
-    
-    console.log('🔄 Noise handshake response received');
-  }
-  
-  private async handleNoiseHandshakeFinal(packet: BitchatPacket): Promise<void> {
-    console.log('📥 Handling Noise handshake final');
-    
-    // TODO: Complete the handshake as responder
-    // This would involve:
-    // 1. Reading the final message
-    // 2. Deriving the session keys
-    // 3. Marking the session as established
-    
-    const senderId = this.bytesToHex(packet.senderId);
-    console.log(`✅ Noise handshake completed with peer: ${senderId}`);
-    
-    // Simulate session establishment
-    const session = this.noiseSessions.get(senderId);
-    if (session) {
-      // In a real implementation, we would derive the actual keys from the handshake
-      console.log('🔐 Noise session established and ready for secure communication');
-    }
-  }
-  
-  private async sendDeliveryAck(messageId: string, recipientId: Uint8Array): Promise<void> {
-    const ownFingerprint = this.identityManager.getFingerprint();
-    if (!ownFingerprint) return;
-    
+
+  private async sendDeliveryAck(messageId: string, recipientPeerId: string): Promise<void> {
     const ack: DeliveryAck = {
       messageId,
-      timestamp: BigInt(Date.now())
+      timestamp: BigInt(Date.now()),
+      recipientFingerprint: this.identityManager.getMyIdentity().fingerprint
     };
-    
+
+    const payload = this.serializeDeliveryAck(ack);
     const packet: BitchatPacket = {
-      version: BITCHAT_PROTOCOL.VERSION,
+      version: 1,
       type: MessageType.DELIVERY_ACK,
-      ttl: BITCHAT_PROTOCOL.MAX_TTL,
+      ttl: 8,
       timestamp: BigInt(Date.now()),
       flags: PacketFlags.HAS_RECIPIENT,
-      payloadLength: 0,
-      senderId: ownFingerprint.slice(0, 8),
-      recipientId: recipientId,
-      payload: new TextEncoder().encode(JSON.stringify(ack))
+      payloadLength: payload.length,
+      senderId: this.truncateFingerprint(this.identityManager.getMyIdentity().fingerprint),
+      recipientId: this.truncateFingerprint(recipientPeerId),
+      payload
     };
-    
-    packet.payloadLength = packet.payload.length;
-    await this.broadcastPacket(packet);
+
+    await this.sendPacket(packet, recipientPeerId);
   }
-  
-  private async relayPacket(packet: BitchatPacket): Promise<void> {
-    // Decrement TTL and relay
-    packet.ttl -= 1;
-    if (packet.ttl <= 0) return;
-    
-    await this.broadcastPacket(packet);
+
+  private async initiateHandshake(peerFingerprint: string): Promise<void> {
+    // TODO: Implement Noise handshake initiation
+    console.log('🤝 Initiating handshake with:', peerFingerprint);
   }
-  
-  private async broadcastPacket(packet: BitchatPacket): Promise<void> {
-    const serialized = BitchatPacketSerializer.serialize(packet);
-    
-    // Broadcast to all connected peers
-    for (const [peerId, device] of this.connectedPeers) {
-      try {
-        if (device.gatt?.connected) {
-          const service = await device.gatt.getPrimaryService(BITCHAT_PROTOCOL.SERVICE_UUID);
-          const characteristic = await service.getCharacteristic(BITCHAT_PROTOCOL.CHARACTERISTIC_UUID);
-          await characteristic.writeValue(serialized);
-        }
-      } catch (error) {
-        console.error(`Failed to send to peer ${peerId}:`, error);
-      }
-    }
+
+  private handlePeerConnected(peerId: string): void {
+    console.log('👋 Peer connected:', peerId);
+    this.dispatchEvent(new CustomEvent('peerConnected', { detail: { peerId } }));
   }
-  
-  private isPacketForUs(packet: BitchatPacket): boolean {
-    if (!packet.recipientId) return true; // Broadcast message
-    
-    const ownFingerprint = this.identityManager.getFingerprint();
-    if (!ownFingerprint) return false;
-    
-    const ownId = ownFingerprint.slice(0, 8);
-    return this.arraysEqual(packet.recipientId, ownId);
+
+  private handlePeerDisconnected(peerId: string): void {
+    console.log('👋 Peer disconnected:', peerId);
+    this.dispatchEvent(new CustomEvent('peerDisconnected', { detail: { peerId } }));
   }
-  
+
+  private isPacketForMe(packet: BitchatPacket): boolean {
+    if (!packet.recipientId) return true; // Broadcast
+    
+    const myFingerprint = this.truncateFingerprint(this.identityManager.getMyIdentity().fingerprint);
+    return this.arraysEqual(packet.recipientId, myFingerprint);
+  }
+
   private getPacketId(packet: BitchatPacket): string {
-    return `${this.bytesToHex(packet.senderId)}-${packet.timestamp.toString()}`;
+    // Create unique ID from packet contents
+    return `${packet.timestamp}_${Buffer.from(packet.senderId).toString('hex')}_${packet.type}`;
   }
-  
-  private serializeMessage(message: BitchatMessage): Uint8Array {
-    const data = JSON.stringify(message);
-    return new TextEncoder().encode(data);
+
+  private truncateFingerprint(fingerprint: string): Uint8Array {
+    // Take first 8 bytes of SHA-256 hash
+    return new Uint8Array(Buffer.from(fingerprint, 'hex').slice(0, 8));
   }
-  
-  private deserializeMessage(data: Uint8Array): BitchatMessage {
-    const json = new TextDecoder().decode(data);
-    return JSON.parse(json);
-  }
-  
-  private bytesToHex(bytes: Uint8Array): string {
-    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-  }
-  
+
   private arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-      if (a[i] !== b[i]) return false;
+    return a.length === b.length && a.every((val, i) => val === b[i]);
+  }
+
+  // Serialization methods
+  private serializePacket(packet: BitchatPacket): Uint8Array {
+    // Implementation based on whitepaper specification
+    const headerSize = 13;
+    const senderIdSize = 8;
+    const recipientIdSize = packet.recipientId ? 8 : 0;
+    const signatureSize = packet.signature ? 64 : 0;
+    
+    const totalSize = headerSize + senderIdSize + recipientIdSize + packet.payload.length + signatureSize;
+    
+    // Pad to next standard size
+    const padSizes = [256, 512, 1024, 2048];
+    const padSize = padSizes.find(size => size >= totalSize) || 2048;
+    
+    const buffer = new ArrayBuffer(padSize);
+    const view = new DataView(buffer);
+    const uint8View = new Uint8Array(buffer);
+    
+    let offset = 0;
+    
+    // Header (13 bytes)
+    view.setUint8(offset++, packet.version);
+    view.setUint8(offset++, packet.type);
+    view.setUint8(offset++, packet.ttl);
+    view.setBigUint64(offset, packet.timestamp);
+    offset += 8;
+    view.setUint8(offset++, packet.flags);
+    view.setUint16(offset, packet.payloadLength);
+    offset += 2;
+    
+    // Sender ID (8 bytes)
+    uint8View.set(packet.senderId, offset);
+    offset += senderIdSize;
+    
+    // Recipient ID (8 bytes, optional)
+    if (packet.recipientId) {
+      uint8View.set(packet.recipientId, offset);
+      offset += recipientIdSize;
     }
-    return true;
+    
+    // Payload
+    uint8View.set(packet.payload, offset);
+    offset += packet.payload.length;
+    
+    // Signature (64 bytes, optional)
+    if (packet.signature) {
+      uint8View.set(packet.signature, offset);
+      offset += signatureSize;
+    }
+    
+    // PKCS#7 padding
+    const paddingLength = padSize - totalSize;
+    for (let i = totalSize; i < padSize; i++) {
+      uint8View[i] = paddingLength;
+    }
+    
+    return uint8View;
+  }
+
+  private deserializePacket(data: Uint8Array): BitchatPacket | null {
+    try {
+      const view = new DataView(data.buffer, data.byteOffset);
+      let offset = 0;
+      
+      // Header
+      const version = view.getUint8(offset++);
+      const type = view.getUint8(offset++);
+      const ttl = view.getUint8(offset++);
+      const timestamp = view.getBigUint64(offset);
+      offset += 8;
+      const flags = view.getUint8(offset++);
+      const payloadLength = view.getUint16(offset);
+      offset += 2;
+      
+      // Sender ID
+      const senderId = data.slice(offset, offset + 8);
+      offset += 8;
+      
+      // Recipient ID (optional)
+      let recipientId: Uint8Array | undefined;
+      if (flags & PacketFlags.HAS_RECIPIENT) {
+        recipientId = data.slice(offset, offset + 8);
+        offset += 8;
+      }
+      
+      // Payload
+      const payload = data.slice(offset, offset + payloadLength);
+      offset += payloadLength;
+      
+      // Signature (optional)
+      let signature: Uint8Array | undefined;
+      if (flags & PacketFlags.HAS_SIGNATURE) {
+        signature = data.slice(offset, offset + 64);
+      }
+      
+      return {
+        version,
+        type: type as MessageType,
+        ttl,
+        timestamp,
+        flags,
+        payloadLength,
+        senderId,
+        recipientId,
+        payload,
+        signature
+      };
+    } catch (error) {
+      console.error('Failed to deserialize packet:', error);
+      return null;
+    }
+  }
+
+  private serializeBitchatMessage(message: BitchatMessage): Uint8Array {
+    // Implementation based on whitepaper specification
+    const encoder = new TextEncoder();
+    
+    const idBytes = encoder.encode(message.id);
+    const senderBytes = encoder.encode(message.sender);
+    const contentBytes = encoder.encode(message.content);
+    const originalSenderBytes = message.originalSender ? encoder.encode(message.originalSender) : new Uint8Array(0);
+    const recipientBytes = message.recipientNickname ? encoder.encode(message.recipientNickname) : new Uint8Array(0);
+    
+    const size = 1 + 8 + 1 + idBytes.length + 1 + senderBytes.length + 2 + contentBytes.length +
+                 (originalSenderBytes.length > 0 ? 1 + originalSenderBytes.length : 0) +
+                 (recipientBytes.length > 0 ? 1 + recipientBytes.length : 0);
+    
+    const buffer = new ArrayBuffer(size);
+    const view = new DataView(buffer);
+    const uint8View = new Uint8Array(buffer);
+    let offset = 0;
+    
+    // Flags
+    view.setUint8(offset++, message.flags);
+    
+    // Timestamp
+    view.setBigUint64(offset, message.timestamp);
+    offset += 8;
+    
+    // ID
+    view.setUint8(offset++, idBytes.length);
+    uint8View.set(idBytes, offset);
+    offset += idBytes.length;
+    
+    // Sender
+    view.setUint8(offset++, senderBytes.length);
+    uint8View.set(senderBytes, offset);
+    offset += senderBytes.length;
+    
+    // Content
+    view.setUint16(offset, contentBytes.length);
+    offset += 2;
+    uint8View.set(contentBytes, offset);
+    offset += contentBytes.length;
+    
+    // Original sender (optional)
+    if (originalSenderBytes.length > 0) {
+      view.setUint8(offset++, originalSenderBytes.length);
+      uint8View.set(originalSenderBytes, offset);
+      offset += originalSenderBytes.length;
+    }
+    
+    // Recipient nickname (optional)
+    if (recipientBytes.length > 0) {
+      view.setUint8(offset++, recipientBytes.length);
+      uint8View.set(recipientBytes, offset);
+    }
+    
+    return uint8View;
+  }
+
+  private deserializeBitchatMessage(data: Uint8Array): BitchatMessage | null {
+    try {
+      const view = new DataView(data.buffer, data.byteOffset);
+      const decoder = new TextDecoder();
+      let offset = 0;
+      
+      // Flags
+      const flags = view.getUint8(offset++);
+      
+      // Timestamp
+      const timestamp = view.getBigUint64(offset);
+      offset += 8;
+      
+      // ID
+      const idLength = view.getUint8(offset++);
+      const id = decoder.decode(data.slice(offset, offset + idLength));
+      offset += idLength;
+      
+      // Sender
+      const senderLength = view.getUint8(offset++);
+      const sender = decoder.decode(data.slice(offset, offset + senderLength));
+      offset += senderLength;
+      
+      // Content
+      const contentLength = view.getUint16(offset);
+      offset += 2;
+      const content = decoder.decode(data.slice(offset, offset + contentLength));
+      offset += contentLength;
+      
+      // Optional fields
+      let originalSender: string | undefined;
+      let recipientNickname: string | undefined;
+      
+      if (offset < data.length) {
+        const originalSenderLength = view.getUint8(offset++);
+        if (originalSenderLength > 0) {
+          originalSender = decoder.decode(data.slice(offset, offset + originalSenderLength));
+          offset += originalSenderLength;
+        }
+      }
+      
+      if (offset < data.length) {
+        const recipientLength = view.getUint8(offset++);
+        if (recipientLength > 0) {
+          recipientNickname = decoder.decode(data.slice(offset, offset + recipientLength));
+        }
+      }
+      
+      return {
+        flags,
+        timestamp,
+        id,
+        sender,
+        content,
+        originalSender,
+        recipientNickname
+      };
+    } catch (error) {
+      console.error('Failed to deserialize BitchatMessage:', error);
+      return null;
+    }
+  }
+
+  private serializeDeliveryAck(ack: DeliveryAck): Uint8Array {
+    const encoder = new TextEncoder();
+    const messageIdBytes = encoder.encode(ack.messageId);
+    const fingerprintBytes = encoder.encode(ack.recipientFingerprint);
+    
+    const size = 1 + messageIdBytes.length + 8 + 1 + fingerprintBytes.length;
+    const buffer = new ArrayBuffer(size);
+    const view = new DataView(buffer);
+    const uint8View = new Uint8Array(buffer);
+    let offset = 0;
+    
+    // Message ID
+    view.setUint8(offset++, messageIdBytes.length);
+    uint8View.set(messageIdBytes, offset);
+    offset += messageIdBytes.length;
+    
+    // Timestamp
+    view.setBigUint64(offset, ack.timestamp);
+    offset += 8;
+    
+    // Recipient fingerprint
+    view.setUint8(offset++, fingerprintBytes.length);
+    uint8View.set(fingerprintBytes, offset);
+    
+    return uint8View;
+  }
+
+  private startRetryService(): void {
+    setInterval(() => {
+      const toRetry = this.retryService.getMessagesToRetry();
+      for (const packet of toRetry) {
+        this.sendPacket(packet).catch(console.error);
+      }
+    }, 5000); // Check every 5 seconds
+  }
+
+  // Public API methods
+  getMyFingerprint(): string {
+    return this.identityManager.getMyIdentity().fingerprint;
+  }
+
+  getPeers(): BitchatPeer[] {
+    return this.identityManager.getAllPeers();
+  }
+
+  verifyPeer(fingerprint: string): void {
+    this.identityManager.markPeerAsVerified(fingerprint);
+  }
+
+  blockPeer(fingerprint: string): void {
+    this.identityManager.blockPeer(fingerprint);
+  }
+
+  unblockPeer(fingerprint: string): void {
+    this.identityManager.unblockPeer(fingerprint);
   }
 }
 
-// Create global instance
-export const bitchatProtocol = new BitChatProtocolManager();
+// Singleton instance
+export const bitchatProtocol = new BitChatProtocol();

@@ -5,7 +5,7 @@ import { MobileNav } from './components/MobileNav'
 import { Toast } from './components/Toast'
 import { MeshNetworkPanel } from './components/MeshNetworkPanel'
 import { checkBluetoothCompatibility } from './utils/bluetooth'
-import type { MeshNetwork } from './utils/mesh-real'
+import type { MeshNetwork } from './utils/mesh'
 import ScanModal from './components/ScanModal-real'
 
 interface Message {
@@ -100,17 +100,6 @@ function App() {
     setToastVisible(true);
   };
 
-  const handleMeshMessage = (message: string, from: string) => {
-    const meshMessage: Message = {
-      id: Date.now().toString(),
-      text: message,
-      timestamp: new Date(),
-      sender: 'other',
-      senderName: from
-    };
-    setMessages(prev => [...prev, meshMessage]);
-  };
-
   const handleMeshStatusChange = (status: string, network?: MeshNetwork) => {
     if (status === 'connected' && network) {
       handleBluetoothMessage(`Connected to mesh network: ${network.name}`, 'success');
@@ -127,10 +116,6 @@ function App() {
   // Scan Modal Handlers
   const handleOpenScanModal = () => {
     setShowScanModal(true);
-  };
-
-  const handleCloseScanModal = () => {
-    setShowScanModal(false);
   };
 
   const handleConnectToNetwork = async (networkId: string) => {
@@ -171,7 +156,6 @@ function App() {
           onUsernameChange={handleUsernameChange}
           onBluetoothMessage={handleBluetoothMessage}
           messageCount={messages.length}
-          onMeshMessage={handleMeshMessage}
           onMeshStatusChange={handleMeshStatusChange}
         />
         <div className="flex-1 bg-gray-800">
@@ -203,7 +187,6 @@ function App() {
         {/* Mesh Network Panel */}
         <div className="w-[400px] flex flex-col">
           <MeshNetworkPanel 
-            onMeshMessage={handleMeshMessage}
             onStatusChange={handleMeshStatusChange}
             onChannelJoin={handleChannelJoin}
             onOpenScanModal={handleOpenScanModal}

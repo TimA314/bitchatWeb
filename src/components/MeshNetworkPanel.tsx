@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { meshManager, type MeshNetwork, type MeshNode } from '../utils/mesh-real';
+import { meshManager, type MeshNetwork, type MeshNode } from '../utils/mesh';
 
 interface MeshNetworkPanelProps {
-  onMeshMessage?: (message: string, from: string) => void;
   onStatusChange?: (status: string, network?: MeshNetwork) => void;
   onChannelJoin?: (channelId: string, channelName: string) => void;
   onOpenScanModal?: () => void;
@@ -16,7 +15,6 @@ interface Channel {
 }
 
 export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({ 
-  onMeshMessage, 
   onStatusChange, 
   onChannelJoin, 
   onOpenScanModal 
@@ -29,13 +27,10 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
 
-  // Generate some default channels when connected
+  // Generate default channel when connected
   const generateChannels = (network: MeshNetwork): Channel[] => {
     return [
-      { id: 'public', name: 'Public', members: network.nodes.length + 1, isDefault: true },
-      { id: 'general', name: 'General', members: Math.floor(Math.random() * 15) + 3, isDefault: false },
-      { id: 'tech', name: 'Tech Talk', members: Math.floor(Math.random() * 8) + 2, isDefault: false },
-      { id: 'random', name: 'Random', members: Math.floor(Math.random() * 12) + 1, isDefault: false },
+      { id: 'public', name: 'Public', members: network.nodes.length + 1, isDefault: true }
     ];
   };
 
@@ -99,21 +94,8 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
           onChannelJoin?.(publicChannel.id, publicChannel.name);
         }
         
-        // Simulate getting connected nodes
-        const mockNodes: MeshNode[] = Array.from({ length: network.nodes.length || 3 }, (_, i) => ({
-          id: `node-${i + 1}`,
-          name: `BitChat User ${i + 1}`,
-          signal: Math.floor(Math.random() * 50) - 80,
-          lastSeen: new Date(Date.now() - Math.random() * 300000),
-          isConnected: true,
-          hops: 1,
-          capabilities: ['chat', 'file'],
-          metadata: {
-            version: '1.1',
-            nodeType: 'endpoint' as const,
-          },
-        }));
-        setConnectedNodes(mockNodes);
+        // Use actual network nodes
+        setConnectedNodes(network.nodes);
       } else {
         setStatusMessage(`Failed to connect to ${network.name}`);
         onStatusChange?.('Connection failed');

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { meshManager } from '../utils/mesh-real';
-import type { MeshNetwork } from '../utils/mesh-real';
+import { meshManager } from '../utils/mesh';
+import type { MeshNetwork } from '../utils/mesh';
 
 interface ScanModalProps {
   isVisible: boolean;

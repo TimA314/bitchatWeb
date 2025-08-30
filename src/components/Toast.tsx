@@ -1,5 +1,4 @@
 import React, { useEffect } from 'react';
-import { ActionButtons } from './ActionButtons';
 
 interface ActionButton {
   label: string;
@@ -76,7 +75,17 @@ export const Toast: React.FC<ToastProps> = ({
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-xs lg:text-sm leading-relaxed whitespace-pre-line">{message}</div>
           {actions && actions.length > 0 && (
-            <ActionButtons actions={actions} className="mt-2 lg:mt-3" />
+            <div className="mt-2 lg:mt-3 flex flex-wrap gap-2">
+              {actions.map((action, index) => (
+                <button
+                  key={index}
+                  onClick={() => window.open(action.url, '_blank')}
+                  className="px-3 py-1 text-xs bg-white/20 hover:bg-white/30 rounded-full transition-colors font-medium"
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
           )}
         </div>
         <button 

@@ -8,7 +8,6 @@ interface MobileNavProps {
   onUsernameChange: (newUsername: string) => void;
   onBluetoothMessage?: (message: string, type: 'warning' | 'error' | 'success' | 'info', actions?: Array<{ label: string; url: string }>) => void;
   messageCount?: number;
-  onMeshMessage?: (message: string, from: string) => void;
   onMeshStatusChange?: (status: string, network?: MeshNetwork) => void;
 }
 
@@ -17,7 +16,6 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   onUsernameChange,
   onBluetoothMessage,
   messageCount = 0,
-  onMeshMessage,
   onMeshStatusChange
 }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -95,7 +93,6 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           {/* Mesh Network Panel */}
           <div className="mt-6 pt-6 border-t border-gray-700">
             <MeshNetworkPanel 
-              onMeshMessage={onMeshMessage}
               onStatusChange={onMeshStatusChange}
             />
           </div>

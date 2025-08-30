@@ -392,3 +392,115 @@ export const requestBluetoothPermission = async (): Promise<{
 };
 
 export {};
+
+// BitChat Bluetooth Transport Layer
+export class BluetoothTransport extends EventTarget {
+  private connectedDevices: Map<string, BluetoothDevice> = new Map();
+  private isInitialized: boolean = false;
+
+  async initialize(): Promise<void> {
+    if (this.isInitialized) return;
+    
+    const isReady = await isBluetoothReady();
+    if (!isReady) {
+      throw new Error('Bluetooth not ready - check device settings and permissions');
+    }
+    
+    this.isInitialized = true;
+    console.log('🔗 Bluetooth transport initialized');
+  }
+
+  async shutdown(): Promise<void> {
+    for (const [deviceId, device] of this.connectedDevices) {
+      try {
+        if (device.gatt?.connected) {
+          device.gatt.disconnect();
+        }
+      } catch (error) {
+        console.warn(`Error disconnecting device ${deviceId}:`, error);
+      }
+    }
+    
+    this.connectedDevices.clear();
+    this.isInitialized = false;
+    console.log('🔌 Bluetooth transport shut down');
+  }
+
+  async sendToDevice(deviceId: string, data: Uint8Array): Promise<void> {
+    const device = this.connectedDevices.get(deviceId);
+    if (!device) {
+      throw new Error(`Device ${deviceId} not connected`);
+    }
+    
+    // TODO: Implement actual Bluetooth data transmission
+    console.log(`📤 Sending ${data.length} bytes to device ${deviceId}`);
+    
+    // Simulate data transmission for now
+    setTimeout(() => {
+      this.dispatchEvent(new CustomEvent('dataSent', {
+        detail: { deviceId, data }
+      }));
+    }, 10);
+  }
+
+  async broadcast(data: Uint8Array): Promise<void> {
+    // TODO: Implement Bluetooth LE advertising for broadcast
+    console.log(`📢 Broadcasting ${data.length} bytes to all devices`);
+    
+    // Send to all connected devices for now
+    for (const [deviceId] of this.connectedDevices) {
+      await this.sendToDevice(deviceId, data);
+    }
+  }
+
+  async relayToAll(data: Uint8Array, excludeDevice: string): Promise<void> {
+    console.log(`🔁 Relaying ${data.length} bytes to all devices except ${excludeDevice}`);
+    
+    for (const [deviceId] of this.connectedDevices) {
+      if (deviceId !== excludeDevice) {
+        await this.sendToDevice(deviceId, data);
+      }
+    }
+  }
+
+  async connectToDevice(deviceId: string): Promise<void> {
+    // TODO: Implement device connection logic
+    console.log(`🔗 Connecting to device ${deviceId}`);
+    
+    // Simulate connection for now
+    setTimeout(() => {
+      this.dispatchEvent(new CustomEvent('peerConnected', {
+        detail: { peerId: deviceId }
+      }));
+    }, 100);
+  }
+
+  async disconnectDevice(deviceId: string): Promise<void> {
+    const device = this.connectedDevices.get(deviceId);
+    if (device && device.gatt?.connected) {
+      device.gatt.disconnect();
+    }
+    
+    this.connectedDevices.delete(deviceId);
+    
+    this.dispatchEvent(new CustomEvent('peerDisconnected', {
+      detail: { peerId: deviceId }
+    }));
+  }
+
+  getConnectedDevices(): string[] {
+    return Array.from(this.connectedDevices.keys());
+  }
+
+  isDeviceConnected(deviceId: string): boolean {
+    const device = this.connectedDevices.get(deviceId);
+    return device?.gatt?.connected || false;
+  }
+
+  // Simulate receiving data (for testing)
+  simulateDataReceived(deviceId: string, data: Uint8Array): void {
+    this.dispatchEvent(new CustomEvent('dataReceived', {
+      detail: { data, peerId: deviceId }
+    }));
+  }
+}

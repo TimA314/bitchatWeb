@@ -227,7 +227,7 @@ export class NoiseSymmetricState {
       combined.set(t);
       combined.set(info, t.length);
       
-      const hmacResult = await this.hmac(prk, combined);
+      const hmacResult = await this.hmac(new Uint8Array(prk), combined);
       t = new Uint8Array(hmacResult);
       outputs.push(new Uint8Array(t));
     }
@@ -536,6 +536,14 @@ export class NoiseSession {
     return this.isEstablished;
   }
   
+  encryptTransportMessage(plaintext: Uint8Array): Uint8Array {
+    return this.encrypt(plaintext);
+  }
+  
+  decryptTransportMessage(ciphertext: Uint8Array): Uint8Array {
+    return this.decrypt(ciphertext);
+  }
+  
   rekey(): void {
     if (this.sendCipher) this.sendCipher.rekey();
     if (this.receiveCipher) this.receiveCipher.rekey();
@@ -552,5 +560,46 @@ export class NoiseSession {
   
   private bytesToHex(bytes: Uint8Array): string {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+}
+
+// Session Manager for handling multiple Noise sessions
+export class NoiseSessionManager {
+  private sessions: Map<string, NoiseSession> = new Map();
+  private handshakeStates: Map<string, NoiseHandshakeState> = new Map();
+
+  async getOrCreateSession(peerId: string): Promise<NoiseSession> {
+    let session = this.sessions.get(peerId);
+    if (!session) {
+      session = new NoiseSession(peerId);
+      this.sessions.set(peerId, session);
+    }
+    return session;
+  }
+
+  getSession(peerId: string): NoiseSession | undefined {
+    return this.sessions.get(peerId);
+  }
+
+  removeSession(peerId: string): void {
+    const session = this.sessions.get(peerId);
+    if (session) {
+      session.destroy();
+      this.sessions.delete(peerId);
+    }
+    this.handshakeStates.delete(peerId);
+  }
+
+  async processHandshakeMessage(peerId: string, message: Uint8Array): Promise<void> {
+    // TODO: Implement handshake processing logic
+    console.log('Processing handshake message for peer:', peerId, 'message length:', message.length);
+  }
+
+  getAllSessions(): NoiseSession[] {
+    return Array.from(this.sessions.values());
+  }
+
+  getEstablishedSessions(): NoiseSession[] {
+    return this.getAllSessions().filter(session => session.isSessionEstablished());
   }
 }
