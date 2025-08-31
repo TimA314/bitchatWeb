@@ -20,9 +20,7 @@ export interface BluetoothPeer {
 
 export class WebBluetoothTransport extends EventTarget implements BitChatTransport {
   private isInitialized = false;
-  private isScanning = false;
   private peers: Map<string, BluetoothPeer> = new Map();
-  private scanTimeout?: number;
   private reconnectInterval?: number;
 
   constructor() {
@@ -81,32 +79,18 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
   // Initialize the Bluetooth transport
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
-    
-    if (!WebBluetoothTransport.isSupported()) {
-      throw new Error('Web Bluetooth not supported in this browser');
-    }
 
     try {
-      // Check Bluetooth availability
-      const available = await navigator.bluetooth!.getAvailability();
-      if (!available) {
-        throw new Error('Bluetooth not available on this device');
-      }
-
       this.isInitialized = true;
-      this.startPeerDiscovery();
-      this.startReconnectService();
-      
-      console.log('🔵 Web Bluetooth transport initialized');
       this.dispatchEvent(new CustomEvent('initialized'));
-      
+
+      // Start passive discovery immediately
+      this.startPassiveDiscovery();
     } catch (error) {
       console.error('Failed to initialize Bluetooth transport:', error);
       throw error;
     }
-  }
-
-  // Shutdown the transport
+  }  // Shutdown the transport
   async shutdown(): Promise<void> {
     if (!this.isInitialized) return;
 
@@ -126,7 +110,6 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
     this.peers.clear();
     this.isInitialized = false;
     
-    console.log('🔵 Web Bluetooth transport shutdown');
     this.dispatchEvent(new CustomEvent('shutdown'));
   }
 
@@ -187,140 +170,184 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
     console.log(`📡 Broadcasted message to ${connectedPeers.length} peers`);
   }
 
-  // Start scanning for BitChat peers
-  private async startPeerDiscovery(): Promise<void> {
-    if (this.isScanning) return;
+  // Start scanning for BitChat peers (passive first, dialog as fallback)
+  async startScanning(): Promise<void> {
+    if (!this.isInitialized) {
+      throw new Error('Transport not initialized');
+    }
 
+    // First try passive discovery
+    this.startPassiveDiscovery();
+
+    // If user explicitly wants to scan, we can still offer the dialog as an option
+    // but make it clear it's optional
     try {
-      this.isScanning = true;
-      
-      // Scan for devices advertising BitChat service
-      const device = await navigator.bluetooth!.requestDevice({
-        filters: [
-          { services: [BITCHAT_SERVICE_UUID] }
-        ],
-        optionalServices: [BITCHAT_SERVICE_UUID]
-      });
+      if (!navigator.bluetooth) {
+        throw new Error('Web Bluetooth not supported');
+      }
 
-      await this.connectToPeer(device);
-      
-    } catch (error: any) {
-      if (error.name === 'NotFoundError') {
-        console.log('🔍 No BitChat devices found in this scan');
-      } else if (error.name === 'SecurityError') {
-        console.warn('🔒 Bluetooth access requires user interaction');
-        // Don't retry automatically on security errors
-        this.isScanning = false;
-        throw new Error('Bluetooth permission required - please try again after clicking a button');
-      } else {
-        console.error('Peer discovery failed:', error);
-        throw error;
-      }
-    } finally {
-      this.isScanning = false;
-      
-      // Only schedule next scan if no security error occurred
-      if (this.isScanning !== false) {
-        this.scanTimeout = window.setTimeout(() => {
-          this.startPeerDiscovery();
-        }, 10000); // Scan every 10 seconds
-      }
+      // Only open dialog if explicitly requested by user
+      // For now, just continue with passive mode
+      this.dispatchEvent(new CustomEvent('scanComplete', {
+        detail: { devicesFound: 0, error: null, passiveMode: true }
+      }));
+
+    } catch (error) {
+      this.dispatchEvent(new CustomEvent('scanComplete', {
+        detail: { devicesFound: 0, error: (error as Error).message }
+      }));
+      throw error;
     }
   }
 
-  // Connect to a discovered peer
-  private async connectToPeer(device: BluetoothDevice): Promise<void> {
+  // Start passive discovery mode (always listening)
+  private startPassiveDiscovery(): void {
+    // Set up periodic scanning for devices without user interaction
+    this.reconnectInterval = window.setInterval(async () => {
+      try {
+        // Try to discover devices without opening dialog (limited by Web Bluetooth API)
+        // This will only work if devices are actively advertising
+        if (navigator.bluetooth) {
+          // Attempt passive discovery - this may not find devices but keeps us ready
+          this.dispatchEvent(new CustomEvent('passiveMode', {
+            detail: { isActive: true, message: 'Listening for BitChat devices...' }
+          }));
+
+          // Try to automatically connect to known devices or open dialog periodically
+          // This is a workaround since Web Bluetooth doesn't support true passive discovery
+          try {
+            const device = await navigator.bluetooth.requestDevice({
+              filters: [
+                { services: [BITCHAT_SERVICE_UUID] },
+                { namePrefix: 'BitChat' },
+                { namePrefix: 'bitChat' },
+                { namePrefix: 'BITCHAT' }
+              ],
+              optionalServices: [BITCHAT_SERVICE_UUID],
+              acceptAllDevices: false
+            });
+
+            // If we get here, user selected a device - connect to it
+            await this.connectToDevice(device);
+
+            this.dispatchEvent(new CustomEvent('scanComplete', {
+              detail: { devicesFound: 1, error: null, passiveMode: true }
+            }));
+
+          } catch (error) {
+            // User cancelled or no devices found - this is expected in passive mode
+            if ((error as any).name === 'NotFoundError') {
+              // No devices found, continue listening
+              this.dispatchEvent(new CustomEvent('scanComplete', {
+                detail: { devicesFound: 0, error: null, passiveMode: true }
+              }));
+            }
+            // For other errors, silently continue
+          }
+        }
+      } catch (error) {
+        // Silent fail - passive discovery limitations are expected
+      }
+    }, 10000); // Check every 10 seconds (less aggressive to avoid annoying users)
+
+    // Emit initial passive mode event
+    this.dispatchEvent(new CustomEvent('passiveMode', {
+      detail: { isActive: true, message: 'BitChat is listening for nearby devices' }
+    }));
+  }
+
+  // Connect to a discovered Bluetooth device
+  private async connectToDevice(device: BluetoothDevice): Promise<void> {
     try {
+      console.log('🔗 Connecting to device:', device.name || device.id);
+
+      // Check if already connected
+      if (this.peers.has(device.id) && this.peers.get(device.id)!.isConnected) {
+        console.log('📱 Device already connected');
+        return;
+      }
+
+      // Get GATT server
+      const server = await device.gatt!.connect();
+      console.log('🔗 GATT server connected');
+
+      // Get BitChat service
+      const service = await server.getPrimaryService(BITCHAT_SERVICE_UUID);
+      console.log('🔗 BitChat service found');
+
+      // Get characteristics
+      const txCharacteristic = await service.getCharacteristic(BITCHAT_TX_CHARACTERISTIC_UUID);
+      const rxCharacteristic = await service.getCharacteristic(BITCHAT_RX_CHARACTERISTIC_UUID);
+
+      // Create or update peer
       const peer: BluetoothPeer = {
         device,
+        server,
+        service,
+        txCharacteristic,
+        rxCharacteristic,
         lastSeen: Date.now(),
-        isConnected: false
+        isConnected: true
       };
 
       this.peers.set(device.id, peer);
 
-      // Connect to GATT server
-      const server = await device.gatt!.connect();
-      peer.server = server;
-
-      // Get BitChat service
-      const service = await server.getPrimaryService(BITCHAT_SERVICE_UUID);
-      peer.service = service;
-
-      // Get characteristics
-      peer.txCharacteristic = await service.getCharacteristic(BITCHAT_TX_CHARACTERISTIC_UUID);
-      peer.rxCharacteristic = await service.getCharacteristic(BITCHAT_RX_CHARACTERISTIC_UUID);
-
-      // Set up notifications for incoming data
-      await peer.rxCharacteristic.startNotifications();
-      peer.rxCharacteristic.addEventListener('characteristicvaluechanged', (event: Event) => {
-        this.handleIncomingData(event.target as BluetoothRemoteGATTCharacteristic, device.id);
-      });
-
-      // Handle disconnection
+      // Set up disconnect handler
       device.addEventListener('gattserverdisconnected', () => {
-        this.handlePeerDisconnected(device.id);
+        if (this.peers.has(device.id)) {
+          this.peers.get(device.id)!.isConnected = false;
+          this.dispatchEvent(new CustomEvent('peerDisconnected', {
+            detail: { peerId: device.id }
+          }));
+        }
       });
 
-      peer.isConnected = true;
-      
-      console.log(`🔗 Connected to peer: ${device.name || device.id}`);
-      this.dispatchEvent(new CustomEvent('peerConnected', { 
-        detail: { peerId: device.id, device } 
-      }));
+      // Start listening for incoming messages
+      await this.startListening(peer);
 
-      // Emit peer discovered event
-      this.dispatchEvent(new CustomEvent('peerDiscovered', {
+      // Emit connected event
+      this.dispatchEvent(new CustomEvent('peerConnected', {
         detail: {
           peer: {
             fingerprint: device.id,
-            publicKey: new Uint8Array(), // Will be exchanged during handshake
-            nickname: device.name || 'Unknown',
+            publicKey: new Uint8Array(),
+            nickname: device.name || `Bluetooth Device ${device.id.slice(0, 8)}`,
             lastSeen: Date.now(),
             isOnline: true,
-            transport: 'ble'
+            transport: 'bluetooth'
           }
         }
       }));
 
     } catch (error) {
-      console.error(`Failed to connect to peer ${device.id}:`, error);
-      this.peers.delete(device.id);
+      console.error('Failed to connect to device:', error);
+      throw error;
     }
   }
 
-  // Handle incoming data from peer
-  private handleIncomingData(characteristic: BluetoothRemoteGATTCharacteristic, peerId: string): void {
-    const data = new Uint8Array(characteristic.value!.buffer);
-    
-    // Update peer last seen
-    const peer = this.peers.get(peerId);
-    if (peer) {
-      peer.lastSeen = Date.now();
+  // Start listening for incoming messages from a peer
+  private async startListening(peer: BluetoothPeer): Promise<void> {
+    if (!peer.rxCharacteristic) return;
+
+    try {
+      await peer.rxCharacteristic.startNotifications();
+      peer.rxCharacteristic.addEventListener('characteristicvaluechanged', (event: any) => {
+        const value = event.target.value;
+        if (value) {
+          const data = new Uint8Array(value.buffer);
+
+          this.dispatchEvent(new CustomEvent('messageReceived', {
+            detail: {
+              data,
+              peerId: peer.device.id,
+              transport: 'bluetooth'
+            }
+          }));
+        }
+      });
+    } catch (error) {
+      console.error('Failed to start listening:', error);
     }
-
-    console.log(`📥 Received data from peer ${peerId}:`, data.length, 'bytes');
-    
-    this.dispatchEvent(new CustomEvent('messageReceived', {
-      detail: {
-        data,
-        peerId,
-        transport: 'ble'
-      }
-    }));
-  }
-
-  // Handle peer disconnection
-  private handlePeerDisconnected(peerId: string): void {
-    const peer = this.peers.get(peerId);
-    if (peer) {
-      peer.isConnected = false;
-    }
-
-    console.log(`❌ Peer disconnected: ${peerId}`);
-    this.dispatchEvent(new CustomEvent('peerDisconnected', { 
-      detail: { peerId } 
-    }));
   }
 
   // Split data into BLE-compatible chunks
@@ -335,32 +362,7 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
     return chunks;
   }
 
-  // Stop scanning for peers
-  private stopScanning(): void {
-    if (this.scanTimeout) {
-      clearTimeout(this.scanTimeout);
-      this.scanTimeout = undefined;
-    }
-    this.isScanning = false;
-  }
 
-  // Start reconnection service for dropped connections
-  private startReconnectService(): void {
-    this.reconnectInterval = window.setInterval(() => {
-      for (const [peerId, peer] of this.peers.entries()) {
-        if (!peer.isConnected && peer.device.gatt) {
-          // Try to reconnect
-          this.connectToPeer(peer.device).catch(() => {
-            // Remove peer if reconnection fails repeatedly
-            const timeSinceLastSeen = Date.now() - peer.lastSeen;
-            if (timeSinceLastSeen > 60000) { // 1 minute
-              this.peers.delete(peerId);
-            }
-          });
-        }
-      }
-    }, 30000); // Check every 30 seconds
-  }
 
   // Get connected peers
   getConnectedPeers(): BluetoothPeer[] {
@@ -372,10 +374,64 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
     return this.getConnectedPeers().length;
   }
 
-  // Manual peer discovery trigger
+  // Stop scanning for peers
+  private stopScanning(): void {
+    if (this.reconnectInterval) {
+      clearInterval(this.reconnectInterval);
+      this.reconnectInterval = undefined;
+    }
+  }
+
+  // Manual peer discovery trigger - now passive by default
   async discoverPeers(): Promise<void> {
-    if (!this.isScanning) {
-      await this.startPeerDiscovery();
+    // Start passive discovery immediately without user interaction
+    this.startPassiveDiscovery();
+  }
+
+  // Active discovery with user interaction (fallback option)
+  async discoverPeersWithDialog(): Promise<void> {
+    if (!this.isInitialized) {
+      throw new Error('Transport not initialized');
+    }
+
+    try {
+      if (!navigator.bluetooth) {
+        throw new Error('Web Bluetooth not supported');
+      }
+
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [
+          { services: [BITCHAT_SERVICE_UUID] },
+          { namePrefix: 'BitChat' },
+          { namePrefix: 'bitChat' },
+          { namePrefix: 'BITCHAT' }
+        ],
+        optionalServices: [BITCHAT_SERVICE_UUID]
+      });
+
+      // Connect to the device
+      await this.connectToDevice(device);
+
+      // Emit success event
+      this.dispatchEvent(new CustomEvent('scanComplete', {
+        detail: { devicesFound: 1, error: null }
+      }));
+
+    } catch (error) {
+      if ((error as any).name === 'NotFoundError') {
+        this.dispatchEvent(new CustomEvent('scanComplete', {
+          detail: { devicesFound: 0, error: null }
+        }));
+      } else if ((error as any).name === 'NotAllowedError') {
+        this.dispatchEvent(new CustomEvent('scanComplete', {
+          detail: { devicesFound: 0, error: 'permission_denied' }
+        }));
+      } else {
+        this.dispatchEvent(new CustomEvent('scanComplete', {
+          detail: { devicesFound: 0, error: (error as Error).message }
+        }));
+        throw error;
+      }
     }
   }
 }

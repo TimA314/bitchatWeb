@@ -2,6 +2,7 @@
 // Implements Nostr-based messaging for online peer-to-peer communication
 
 import type { BitChatTransport } from './bitchat-core';
+import { BitChatQudag } from './bitchat-wasm.js';
 
 // Simplified Nostr implementation for BitChat
 // Will use the proper nostr-tools when API is stabilized
@@ -18,6 +19,7 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
   private publicKey: string | null = null;
   private isInitialized = false;
   private websockets: Map<string, WebSocket> = new Map();
+  private bitchatWasm: BitChatQudag | null = null;
 
   // Default Nostr relays for BitChat
   private defaultRelays = [
@@ -40,14 +42,18 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
     if (this.isInitialized) return;
 
     try {
-      // Load or generate Nostr keypair
+      // Initialize WASM cryptographic functions
+      this.bitchatWasm = new BitChatQudag();
+      await this.bitchatWasm.initialize();
+      
+      // Load or generate Nostr identity using WASM crypto
       await this.initializeIdentity();
       
       // Connect to relays
       await this.connectToRelays();
       
       this.isInitialized = true;
-      console.log('🟣 Nostr transport initialized');
+      console.log('🟣 Nostr transport initialized with WASM cryptography');
       this.dispatchEvent(new CustomEvent('initialized'));
       
     } catch (error) {
@@ -78,13 +84,13 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
     }
 
     try {
-      // Convert data to hex for transmission
-      const content = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join('');
+      // Convert message data to hex for transmission
+      const messageContent = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join('');
       
       // Create Nostr event (simplified)
-      const event = {
+      const event: any = {
         kind: 30000, // Custom BitChat kind
-        content,
+        content: messageContent,
         tags: [
           ['t', 'bitchat'],
           ['client', 'bitchat-pwa']
@@ -98,15 +104,29 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
         event.tags.push(['p', recipient]);
       }
 
+      // Generate event ID (SHA-256 hash of serialized event)
+      const serialized = JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content]);
+      const encoder = new TextEncoder();
+      const eventData = encoder.encode(serialized);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', eventData);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      event.id = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
       // Send to all connected relays
       const message = JSON.stringify(['EVENT', event]);
+      console.log(`📤 Sending Nostr message to ${recipient || 'broadcast'}:`, {
+        kind: event.kind,
+        tags: event.tags,
+        contentLength: event.content.length,
+        eventId: event.id,
+        connectedRelays: this.websockets.size
+      });
+
       for (const ws of this.websockets.values()) {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(message);
         }
       }
-      
-      console.log(`📤 Sent Nostr message to ${recipient || 'broadcast'}`);
       
     } catch (error) {
       console.error('Failed to send Nostr message:', error);
@@ -119,35 +139,37 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
     return this.sendMessage(data); // No recipient = broadcast
   }
 
-  // Initialize or load Nostr identity
+  // Initialize or load Nostr identity using WASM crypto
   private async initializeIdentity(): Promise<void> {
+    if (!this.bitchatWasm) throw new Error('WASM not initialized');
+    
     const stored = localStorage.getItem('bitchat-nostr-identity');
     
     if (stored) {
       const identity = JSON.parse(stored);
-      this.privateKey = identity.privateKey;
-      this.publicKey = identity.publicKey;
-      console.log('📱 Loaded existing Nostr identity:', this.publicKey?.substring(0, 16));
-    } else {
-      // Generate simple keypair (in production, use proper cryptography)
-      this.privateKey = this.generateSimpleKey();
-      this.publicKey = this.generateSimpleKey(); // Simplified for demo
-      
-      const identity = {
-        privateKey: this.privateKey,
-        publicKey: this.publicKey
-      };
-      
-      localStorage.setItem('bitchat-nostr-identity', JSON.stringify(identity));
-      console.log('🆕 Generated new Nostr identity:', this.publicKey.substring(0, 16));
+      // Verify the stored identity is valid
+      if (identity.fingerprint && identity.publicKey) {
+        this.privateKey = identity.privateKey;
+        this.publicKey = identity.publicKey;
+        console.log('📱 Loaded existing Nostr identity:', identity.fingerprint);
+        return;
+      }
     }
-  }
-
-  // Simple key generation (replace with proper crypto in production)
-  private generateSimpleKey(): string {
-    const array = new Uint8Array(32);
-    crypto.getRandomValues(array);
-    return Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    // Generate new identity using WASM crypto
+    const wasmIdentity = await this.bitchatWasm.generateIdentity('NostrTransport');
+    
+    this.privateKey = Array.from(wasmIdentity.private_key).map(b => b.toString(16).padStart(2, '0')).join('');
+    this.publicKey = Array.from(wasmIdentity.public_key).map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    const identity = {
+      fingerprint: wasmIdentity.fingerprint,
+      privateKey: this.privateKey,
+      publicKey: this.publicKey
+    };
+    
+    localStorage.setItem('bitchat-nostr-identity', JSON.stringify(identity));
+    console.log('🆕 Generated new Nostr identity with WASM crypto:', wasmIdentity.fingerprint);
   }
 
   // Connect to Nostr relays
@@ -167,21 +189,26 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
           relay.connected = true;
           relay.lastPing = Date.now();
           console.log(`🔗 Connected to Nostr relay: ${relay.url}`);
-          
-          // Subscribe to BitChat messages
+
+                    // Subscribe to BitChat messages
           const subscription = JSON.stringify([
             'REQ',
             'bitchat-sub',
             {
               kinds: [30000],
-              '#t': ['bitchat'],
+              '#t': ['bitchat', 'presence'], // Include both bitchat and presence tags
               since: Math.floor(Date.now() / 1000) - 3600 // Last hour
             }
           ]);
+          console.log(`📡 Subscribing to BitChat messages on ${relay.url}:`, JSON.parse(subscription));
           ws.send(subscription);
+
+          // Send a presence announcement
+          this.sendPresenceAnnouncement(relay.url);
         };
 
         ws.onmessage = (event) => {
+          console.log(`📨 Raw message from ${relay.url}:`, event.data.substring(0, 200) + '...');
           this.handleNostrMessage(event.data, relay.url);
         };
 
@@ -213,33 +240,87 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
     console.log(`🟣 Connected to ${connectedCount}/${this.relays.length} Nostr relays`);
   }
 
-  // Handle incoming Nostr messages
-  private handleNostrMessage(data: string, _relayUrl: string): void {
+    // Handle incoming Nostr messages
+  private handleNostrMessage(data: string, relayUrl: string): void {
     try {
       const message = JSON.parse(data);
-      
+
+      // Log all messages for debugging
+      if (message[0] === 'EVENT') {
+        console.log(`📨 EVENT from ${relayUrl}: kind=${message[2]?.kind}, pubkey=${message[2]?.pubkey?.substring(0, 8)}..., tags=`, message[2]?.tags);
+      } else if (message[0] === 'NOTICE') {
+        console.log(`📢 NOTICE from ${relayUrl}: ${message[1]}`);
+      } else if (message[0] === 'EOSE') {
+        console.log(`🏁 End of stored events from ${relayUrl}`);
+      } else {
+        console.log(`📨 ${message[0]} from ${relayUrl}:`, message);
+      }
+
       if (message[0] === 'EVENT' && message[2]) {
         const event = message[2];
-        
+
         // Skip our own messages
         if (event.pubkey === this.publicKey) {
+          console.log('🔄 Skipping our own message from', relayUrl);
           return;
         }
 
-        // Check if it's a BitChat message
-        const isBitChatMessage = event.tags?.some((tag: string[]) => 
+        // Check if it's a BitChat message or presence announcement
+        const isBitChatMessage = event.tags?.some((tag: string[]) =>
           tag[0] === 't' && tag[1] === 'bitchat'
         );
+        const isPresenceAnnouncement = event.tags?.some((tag: string[]) =>
+          tag[0] === 't' && tag[1] === 'presence'
+        );
 
-        if (isBitChatMessage && event.content) {
+        console.log(`🔍 Event analysis: kind=${event.kind}, hasBitChatTag=${isBitChatMessage}, hasPresenceTag=${isPresenceAnnouncement}, contentLength=${event.content?.length || 0}`);
+
+        if (isPresenceAnnouncement && event.content) {
+          // Handle presence announcements
+          console.log(`👋 Presence announcement from ${event.pubkey.substring(0, 16)}`);
+          try {
+            const hexMatches = event.content.match(/.{2}/g);
+            if (hexMatches) {
+              const data = new Uint8Array(hexMatches.map((byte: string) => parseInt(byte, 16)));
+              const decoder = new TextDecoder();
+              const presenceData = JSON.parse(decoder.decode(data));
+              console.log('📍 Presence data:', presenceData);
+            }
+          } catch (decodeError) {
+            console.log('📍 Could not decode presence data');
+          }
+
+          // Emit peer discovery for presence announcements
+          this.dispatchEvent(new CustomEvent('peerDiscovered', {
+            detail: {
+              peer: {
+                fingerprint: event.pubkey,
+                publicKey: new Uint8Array(),
+                nickname: 'Nostr User',
+                lastSeen: event.created_at * 1000,
+                isOnline: true,
+                transport: 'nostr'
+              }
+            }
+          }));
+        }
+        else if (isBitChatMessage && event.content) {
           // Convert hex content back to bytes
           const hexMatches = event.content.match(/.{2}/g);
           if (hexMatches) {
             const data = new Uint8Array(hexMatches.map((byte: string) => parseInt(byte, 16)));
 
-            console.log(`📥 Received Nostr message from ${event.pubkey.substring(0, 16)}`);
-            
-            this.dispatchEvent(new CustomEvent('messageReceived', {
+            console.log(`📥 BitChat message received from ${event.pubkey.substring(0, 16)} (${data.length} bytes)`);
+            console.log('🔍 Message content preview:', Array.from(data.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+
+            // Try to decode as JSON for debugging
+            try {
+              const decoder = new TextDecoder();
+              const textContent = decoder.decode(data);
+              console.log('📄 Decoded content:', textContent);
+            } catch (decodeError) {
+              console.log('📄 Could not decode as text');
+            }            this.dispatchEvent(new CustomEvent('messageReceived', {
               detail: {
                 data,
                 peerId: event.pubkey,
@@ -279,9 +360,64 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
     return this.publicKey;
   }
 
-  // Get relay status
-  getRelayStatus(): NostrRelay[] {
-    return [...this.relays];
+  // Send a presence announcement to let other devices know we're here
+  private async sendPresenceAnnouncement(relayUrl: string): Promise<void> {
+    try {
+      if (!this.publicKey) return;
+
+      // Create a simple presence announcement
+      const presenceData = JSON.stringify({
+        type: 'presence',
+        device: navigator.userAgent.includes('Android') ? 'android' : 'desktop',
+        timestamp: Date.now(),
+        version: '1.0'
+      });
+
+      const content = Array.from(new TextEncoder().encode(presenceData))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+
+      const event: any = {
+        kind: 30000, // Custom BitChat kind
+        content,
+        tags: [
+          ['t', 'bitchat'],
+          ['t', 'presence'],
+          ['client', 'bitchat-pwa']
+        ],
+        created_at: Math.floor(Date.now() / 1000),
+        pubkey: this.publicKey
+      };
+
+      // Generate event ID (SHA-256 hash of serialized event)
+      const serialized = JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content]);
+      const encoder = new TextEncoder();
+      const eventData = encoder.encode(serialized);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', eventData);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      event.id = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+      console.log(`📢 Generated presence event ID: ${event.id}`);
+
+      const message = JSON.stringify(['EVENT', event]);
+      const ws = this.websockets.get(relayUrl);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+        console.log(`📢 Sent presence announcement to ${relayUrl}`);
+      }
+    } catch (error) {
+      console.error('Failed to send presence announcement:', error);
+    }
+  }
+
+  // Manually announce presence (for debugging)
+  async announcePresence(): Promise<void> {
+    console.log('📢 Manually announcing presence...');
+    for (const relay of this.relays) {
+      if (relay.connected) {
+        await this.sendPresenceAnnouncement(relay.url);
+      }
+    }
   }
 
   // Add custom relay
@@ -297,7 +433,7 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
 
     try {
       const ws = new WebSocket(url);
-      
+
       ws.onopen = () => {
         relay.connected = true;
         relay.lastPing = Date.now();
@@ -315,7 +451,7 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
 
       this.websockets.set(url, ws);
       this.relays.push(relay);
-      
+
     } catch (error) {
       console.error(`Failed to add relay ${url}:`, error);
       throw error;

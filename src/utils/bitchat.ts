@@ -13,24 +13,25 @@ import { NostrTransport } from './nostr-transport';
 // Create and configure the main BitChat instance
 export async function createBitChatInstance(): Promise<BitChatProtocol> {
   const bitchat = new BitChatProtocol();
-  
-  // Add Bluetooth transport if supported
-  if (WebBluetoothTransport.isSupported()) {
-    const bluetoothTransport = new WebBluetoothTransport();
-    bitchat.addTransport(bluetoothTransport);
-    console.log('🔵 Added Bluetooth transport');
-  } else {
-    console.log('🔵 Bluetooth transport not supported');
-  }
 
-  // Add Nostr transport for online connectivity
+  // Add Nostr transport for online connectivity (primary transport)
   const nostrTransport = new NostrTransport();
   bitchat.addTransport(nostrTransport);
-  console.log('🟣 Added Nostr transport');
+  console.log('🟣 Added Nostr transport (primary)');
+
+  // Add Bluetooth transport only if explicitly requested (optional)
+  // Bluetooth requires browser permissions and pairing dialogs
+  if (WebBluetoothTransport.isSupported() && import.meta.env.DEV) {
+    const bluetoothTransport = new WebBluetoothTransport();
+    bitchat.addTransport(bluetoothTransport);
+    console.log('🔵 Added Bluetooth transport (development only)');
+  } else {
+    console.log('🔵 Bluetooth transport disabled (production mode)');
+  }
 
   // Initialize the protocol
   await bitchat.initialize();
-  
+
   return bitchat;
 }
 
@@ -50,39 +51,12 @@ export async function sendMessage(content: string, recipient?: string): Promise<
   return bitchat.sendMessage(content, recipient);
 }
 
-export async function startBitChat(): Promise<void> {
-  const bitchat = await getBitChatInstance();
-  await bitchat.start();
-}
-
-export async function stopBitChat(): Promise<void> {
-  if (bitchatInstance) {
-    await bitchatInstance.stop();
-  }
-}
-
-// Event subscription helpers
-export async function onMessage(handler: (event: Event) => void): Promise<void> {
-  const bitchat = await getBitChatInstance();
-  bitchat.addEventListener('messageReceived', handler);
-}
-
-export async function onPeerDiscovered(handler: (event: Event) => void): Promise<void> {
-  const bitchat = await getBitChatInstance();
-  bitchat.addEventListener('peerDiscovered', handler);
-}
-
-export async function getIdentity() {
+export async function getIdentity(): Promise<any> {
   const bitchat = await getBitChatInstance();
   return bitchat.getIdentity();
 }
 
-export async function getPeers() {
+export async function getPeers(): Promise<any[]> {
   const bitchat = await getBitChatInstance();
   return bitchat.getPeers();
-}
-
-export async function getOnlinePeers() {
-  const bitchat = await getBitChatInstance();
-  return bitchat.getOnlinePeers();
 }

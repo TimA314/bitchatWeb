@@ -6,7 +6,7 @@ import { UserProfile } from './components/UserProfile';
 import { MobileNav } from './components/MobileNav';
 import { Toast } from './components/Toast';
 import { checkBluetoothCompatibility } from './utils/bluetooth';
-import { type MeshNetwork } from './utils/mesh';
+import { type MeshNetwork, meshManager } from './utils/mesh';
 
 interface Message {
   id: string;
@@ -56,7 +56,7 @@ function App() {
     checkBluetooth();
   }, []);
 
-  const handleSendMessage = (text: string) => {
+  const handleSendMessage = async (text: string) => {
     const newMessage: Message = {
       id: Date.now().toString(),
       text,
@@ -67,17 +67,29 @@ function App() {
     
     setMessages(prev => [...prev, newMessage]);
     
-    // Simulate a response (in a real app, this would be WebSocket or API call)
-    setTimeout(() => {
-      const botResponse: Message = {
-        id: (Date.now() + 1).toString(),
-        text: `Echo: ${text}`,
-        timestamp: new Date(),
-        sender: 'other',
-        senderName: 'BitChat Bot'
-      };
-      setMessages(prev => [...prev, botResponse]);
-    }, 1000);
+    // Send message through BitChat mesh network to default channel
+    try {
+      await meshManager.sendMessage({
+        type: 'chat',
+        content: text,
+        channel: 'public', // Default channel
+        timestamp: newMessage.timestamp,
+        sender: username
+      });
+    } catch (error) {
+      console.error('Failed to send message through mesh:', error);
+      // Fallback to local echo if mesh fails
+      setTimeout(() => {
+        const botResponse: Message = {
+          id: (Date.now() + 1).toString(),
+          text: `Echo: ${text}`,
+          timestamp: new Date(),
+          sender: 'other',
+          senderName: 'BitChat Bot'
+        };
+        setMessages(prev => [...prev, botResponse]);
+      }, 1000);
+    }
   };
 
   const handleUsernameChange = (newUsername: string) => {

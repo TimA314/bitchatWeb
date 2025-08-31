@@ -2,6 +2,8 @@
 // Uses bitchat-qudag WASM when available, with fallback implementations
 // Supports both BLE mesh networking and Nostr for hybrid operation
 
+import { BitChatQudag } from './bitchat-wasm.js';
+
 // Core BitChat types based on the whitepaper specification
 export interface BitChatMessage {
   id: string;
@@ -44,11 +46,12 @@ export class BitChatProtocol extends EventTarget {
   private identity: BitChatIdentity | null = null;
   private peers: Map<string, BitChatPeer> = new Map();
   private transports: BitChatTransport[] = [];
-  private wasmModule: any = null;
+  private bitchatCore: BitChatQudag;
   private isInitialized = false;
 
   constructor() {
     super();
+    this.bitchatCore = new BitChatQudag();
   }
 
   // Initialize the BitChat protocol
@@ -56,8 +59,9 @@ export class BitChatProtocol extends EventTarget {
     if (this.isInitialized) return;
 
     try {
-      // Try to load WASM module first
-      await this.loadWasmModule();
+      // Initialize BitChat WASM core
+      await this.bitchatCore.initialize();
+      console.log('✅ BitChat Qudag WASM module loaded successfully');
     } catch (error) {
       console.log('WASM module not available, using fallback implementation');
     }
@@ -68,21 +72,6 @@ export class BitChatProtocol extends EventTarget {
     this.isInitialized = true;
     this.dispatchEvent(new CustomEvent('initialized'));
     console.log('🚀 BitChat Protocol initialized');
-  }
-
-    // WASM module loading (will be implemented when the module is available)
-  async loadWasmModule() {
-    try {
-      // TODO: Import the actual bitchat-qudag WASM module when available
-      // const wasmModule = await import("@bitchat/qudag-wasm");
-      // await wasmModule.default();
-      // this.wasmModule = wasmModule;
-      console.log('🔧 WASM module loading disabled - using fallback implementation');
-      return false;
-    } catch (error) {
-      console.warn('Failed to load WASM module, using fallback implementation:', error);
-      return false;
-    }
   }
 
   // Initialize or load user identity
@@ -101,9 +90,16 @@ export class BitChatProtocol extends EventTarget {
 
   // Generate a new BitChat identity
   private async generateNewIdentity(): Promise<BitChatIdentity> {
-    if (this.wasmModule) {
+    if (this.bitchatCore.isWasmAvailable()) {
       // Use WASM module for identity generation
-      return this.wasmModule.generate_identity();
+      const wasmIdentity = await this.bitchatCore.generateIdentity();
+      // Convert from WASM format to core format
+      return {
+        fingerprint: wasmIdentity.fingerprint,
+        publicKey: wasmIdentity.public_key,
+        privateKey: wasmIdentity.private_key,
+        nickname: wasmIdentity.nickname || 'Anonymous'
+      };
     } else {
       // Fallback: Use Web Crypto API with ECDSA (better browser support)
       const keyPair = await crypto.subtle.generateKey(
@@ -184,6 +180,14 @@ export class BitChatProtocol extends EventTarget {
     // Emit local event
     this.dispatchEvent(new CustomEvent('messageSent', { detail: message }));
     
+    console.log(`📤 BitChat message sent:`, {
+      id: message.id,
+      sender: message.sender.substring(0, 8),
+      recipient: message.recipient?.substring(0, 8) || 'broadcast',
+      contentLength: message.content.length,
+      timestamp: new Date(message.timestamp).toLocaleTimeString()
+    });
+    
     return message.id;
   }
 
@@ -205,6 +209,13 @@ export class BitChatProtocol extends EventTarget {
       this.dispatchEvent(new CustomEvent('messageReceived', { 
         detail: { message, transport: transportType } 
       }));
+
+      console.log(`📨 BitChat message processed:`, {
+        sender: message.sender.substring(0, 8),
+        contentLength: message.content.length,
+        transport: transportType,
+        timestamp: new Date(message.timestamp).toLocaleTimeString()
+      });
       
     } catch (error) {
       console.error('Failed to handle incoming message:', error);
@@ -228,27 +239,31 @@ export class BitChatProtocol extends EventTarget {
 
   // Serialize message for transmission
   private async serializeMessage(message: BitChatMessage): Promise<Uint8Array> {
-    if (this.wasmModule) {
-      return this.wasmModule.serialize_message(message);
-    } else {
-      // Fallback serialization
-      const encoder = new TextEncoder();
-      const data = encoder.encode(JSON.stringify(message));
-      
-      // Sign the message
-      if (this.identity) {
-        const signature = await this.signData(data);
-        message.signature = signature;
-      }
-      
-      return encoder.encode(JSON.stringify(message));
+    if (this.bitchatCore.isWasmAvailable()) {
+      // TODO: Convert between core and WASM message formats
+      console.log('🔧 Using fallback serialization - interface conversion needed');
     }
+    
+    // Fallback serialization
+    const encoder = new TextEncoder();
+    const data = encoder.encode(JSON.stringify(message));
+    
+    // Sign the message
+    if (this.identity) {
+      const signature = await this.signData(data);
+      message.signature = signature;
+    }
+    
+    return encoder.encode(JSON.stringify(message));
   }
 
   // Deserialize received message
   private async deserializeMessage(data: Uint8Array): Promise<BitChatMessage> {
-    if (this.wasmModule) {
-      return this.wasmModule.deserialize_message(data);
+    if (this.bitchatCore.isWasmAvailable()) {
+      // Note: May need interface conversion between WASM and core types
+      const wasmMessage = await this.bitchatCore.deserializeMessage(data);
+      // Convert from WASM format to core format if needed
+      return wasmMessage as any; // TODO: Proper type conversion
     } else {
       // Fallback deserialization
       const decoder = new TextDecoder();
@@ -262,15 +277,17 @@ export class BitChatProtocol extends EventTarget {
       throw new Error('No identity available for signing');
     }
 
-    if (this.wasmModule) {
+    if (this.bitchatCore.isWasmAvailable()) {
       // Use WASM module for signing when available
-      return this.wasmModule.sign_data(data, this.identity.privateKey);
-    } else {
-      // Fallback: Simple hash-based signature for demo
-      const encoder = new TextEncoder();
-      const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(data.toString()));
-      return new Uint8Array(hashBuffer);
+      // TODO: Add sign_data method to WASM interface
+      // return await this.bitchatCore.sign_data(data, this.identity.privateKey);
+      console.warn('WASM signing not yet implemented, using fallback');
     }
+    
+    // Fallback: Simple hash-based signature for demo
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(data.toString()));
+    return new Uint8Array(hashBuffer);
   }
 
   // Verify message signature
@@ -280,21 +297,22 @@ export class BitChatProtocol extends EventTarget {
     const peer = this.peers.get(message.sender);
     if (!peer) return false;
 
-    if (this.wasmModule) {
+    if (this.bitchatCore.isWasmAvailable()) {
       // Use WASM module for verification when available
-      return this.wasmModule.verify_signature(message, peer.publicKey);
-    } else {
-      // Fallback: Simple verification for demo
-      const messageToVerify = { ...message };
-      delete messageToVerify.signature;
-      const encoder = new TextEncoder();
-      const data = encoder.encode(JSON.stringify(messageToVerify));
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      const expectedSignature = new Uint8Array(hashBuffer);
-      
-      // Simple comparison for demo
-      return this.arraysEqual(message.signature, expectedSignature);
+      // TODO: Convert between core and WASM message formats
+      console.log('🔧 Using fallback verification - interface conversion needed');
     }
+    
+    // Fallback: Simple verification for demo
+    const messageToVerify = { ...message };
+    delete messageToVerify.signature;
+    const encoder = new TextEncoder();
+    const data = encoder.encode(JSON.stringify(messageToVerify));
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const expectedSignature = new Uint8Array(hashBuffer);
+    
+    // Simple comparison for demo
+    return this.arraysEqual(message.signature, expectedSignature);
   }
 
   // Helper function to compare arrays

@@ -1,3 +1,5 @@
+import { BitChatQudag } from './bitchat-wasm.js';
+
 // Extend Navigator interface to include bluetooth
 declare global {
   interface Navigator {
@@ -76,7 +78,6 @@ declare global {
     writableAuxiliaries: boolean;
   }
 
-  type BluetoothServiceUUID = number | string;
   type BluetoothCharacteristicUUID = number | string;
 }
 
@@ -428,10 +429,17 @@ export const requestBluetoothPermission = async (): Promise<{
 
 export {};
 
-// BitChat Bluetooth Transport Layer
+// BitChat Bluetooth Transport Layer with Noise Protocol Integration
 export class BluetoothTransport extends EventTarget {
   private connectedDevices: Map<string, BluetoothDevice> = new Map();
+  private noiseStates: Map<string, any> = new Map(); // Noise handshake states per device
+  private bitchatCore: BitChatQudag;
   private isInitialized: boolean = false;
+
+  constructor() {
+    super();
+    this.bitchatCore = new BitChatQudag();
+  }
 
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
@@ -441,8 +449,11 @@ export class BluetoothTransport extends EventTarget {
       throw new Error('Bluetooth not ready - check device settings and permissions');
     }
     
+    // Initialize BitChat WASM core
+    await this.bitchatCore.initialize();
+    
     this.isInitialized = true;
-    console.log('🔗 Bluetooth transport initialized');
+    console.log('🔗 Bluetooth transport initialized with Noise protocol support');
   }
 
   async shutdown(): Promise<void> {
@@ -467,15 +478,93 @@ export class BluetoothTransport extends EventTarget {
       throw new Error(`Device ${deviceId} not connected`);
     }
     
+    // Check if Noise handshake is complete
+    const noiseState = this.noiseStates.get(deviceId);
+    let encryptedData = data;
+    
+    if (noiseState && noiseState.is_complete) {
+      // Encrypt data using Noise protocol
+      try {
+        const encrypted = await this.bitchatCore.noiseEncrypt(noiseState, data);
+        encryptedData = encrypted.ciphertext;
+        console.log(`🔐 Data encrypted using Noise protocol for device ${deviceId}`);
+      } catch (error) {
+        console.warn(`Failed to encrypt data for ${deviceId}:`, error);
+      }
+    } else {
+      console.warn(`⚠️ Sending unencrypted data to ${deviceId} - Noise handshake not complete`);
+    }
+    
     // TODO: Implement actual Bluetooth data transmission
-    console.log(`📤 Sending ${data.length} bytes to device ${deviceId}`);
+    console.log(`📤 Sending ${encryptedData.length} bytes to device ${deviceId}`);
     
     // Simulate data transmission for now
     setTimeout(() => {
       this.dispatchEvent(new CustomEvent('dataSent', {
-        detail: { deviceId, data }
+        detail: { deviceId, data: encryptedData }
       }));
     }, 10);
+  }
+
+  async initiateNoiseHandshake(deviceId: string): Promise<void> {
+    console.log(`🤝 Initiating Noise handshake with device ${deviceId}`);
+    
+    try {
+      // Initialize Noise handshake as initiator
+      const handshakeState = await this.bitchatCore.initNoiseHandshake();
+      this.noiseStates.set(deviceId, handshakeState);
+      
+      // Send initial handshake message
+      // TODO: Send via actual Bluetooth characteristic
+      console.log(`✅ Noise handshake initiated for device ${deviceId}`);
+      
+      this.dispatchEvent(new CustomEvent('noiseHandshakeStarted', {
+        detail: { deviceId, state: handshakeState }
+      }));
+      
+    } catch (error) {
+      console.error(`❌ Failed to initiate Noise handshake with ${deviceId}:`, error);
+      throw error;
+    }
+  }
+
+  async handleNoiseHandshakeResponse(deviceId: string, responseData: Uint8Array): Promise<void> {
+    console.log(`🔄 Handling Noise handshake response from device ${deviceId}`);
+    
+    try {
+      let noiseState = this.noiseStates.get(deviceId);
+      
+      if (!noiseState) {
+        // We're responding to an incoming handshake
+        noiseState = await this.bitchatCore.respondNoiseHandshake(responseData);
+        this.noiseStates.set(deviceId, noiseState);
+        console.log(`📥 Responding to incoming Noise handshake from ${deviceId}`);
+      } else {
+        // Continue existing handshake
+        const result = await this.bitchatCore.stepNoiseHandshake(noiseState, responseData);
+        this.noiseStates.set(deviceId, result.state);
+        noiseState = result.state;
+        
+        if (result.payload) {
+          // Send response payload back
+          // TODO: Send via actual Bluetooth characteristic
+          console.log(`📤 Sending Noise handshake response to ${deviceId}`);
+        }
+      }
+      
+      if (noiseState.is_complete) {
+        console.log(`✅ Noise handshake completed with device ${deviceId} - secure channel established`);
+        this.dispatchEvent(new CustomEvent('noiseHandshakeComplete', {
+          detail: { deviceId, state: noiseState }
+        }));
+      }
+      
+    } catch (error) {
+      console.error(`❌ Failed to handle Noise handshake response from ${deviceId}:`, error);
+      // Remove failed handshake state
+      this.noiseStates.delete(deviceId);
+      throw error;
+    }
   }
 
   async broadcast(data: Uint8Array): Promise<void> {

@@ -20,11 +20,11 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
   const [availableNetworks, setAvailableNetworks] = useState<MeshNetwork[]>([]);
   const [currentNetwork, setCurrentNetwork] = useState<MeshNetwork | null>(null);
   const [connectedNodes, setConnectedNodes] = useState<MeshNode[]>([]);
-  const [statusMessage, setStatusMessage] = useState('BitChat ready - click "Start Discovery" to find nearby devices');
+  const [statusMessage, setStatusMessage] = useState('BitChat is listening for nearby devices...');
   const [availableChannels, setAvailableChannels] = useState<Channel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [isDiscovering, setIsDiscovering] = useState(false);
-  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [isPassiveMode, setIsPassiveMode] = useState(true);
 
   // Generate default channel when connected
   const generateChannels = (network: MeshNetwork): Channel[] => {
@@ -33,57 +33,16 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
     ];
   };
 
-  // Debug logging function
-  const addDebugLog = (message: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    const logEntry = `[${timestamp}] ${message}`;
-    setDebugLogs(prev => [...prev.slice(-49), logEntry]); // Keep last 50 logs
-    console.log('🔍 BitChat Debug:', logEntry);
-  };
-
-  // Start discovery with user interaction
-  const startDiscovery = async () => {
-    console.log('🔍 Starting BitChat network discovery...');
-    setIsDiscovering(true);
-    setStatusMessage('Starting BitChat discovery...');
-    addDebugLog('🚀 User initiated network discovery');
-    addDebugLog('🔧 Initializing BitChat protocol...');
-    addDebugLog('⚠️ WARNING: Current implementation uses browser pairing (will be fixed)');
-    
-    try {
-      // Start the mesh networking (this will trigger the user permission request)
-      addDebugLog('📡 Starting mesh networking...');
-      await meshManager.startNetworking();
-      addDebugLog('✅ Mesh networking started successfully');
-      addDebugLog('🔍 Scanning for BitChat devices via Bluetooth...');
-      addDebugLog('📱 Browser pairing dialog may appear - this is temporary until Noise protocol is implemented');
-      setStatusMessage('Broadcasting network - discoverable by other devices');
-      console.log('📡 BitChat networking started');
-    } catch (error) {
-      console.error('❌ Failed to start networking:', error);
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      addDebugLog(`❌ Discovery failed: ${errorMsg}`);
-      if (errorMsg.includes('Invalid Service name')) {
-        addDebugLog('🔧 UUID format was fixed - this should not happen');
-      }
-      if (errorMsg.includes('user gesture')) {
-        addDebugLog('🔒 User gesture required for Bluetooth access');
-      }
-      setStatusMessage(`Discovery failed: ${errorMsg}`);
-      setIsDiscovering(false);
-    }
-  };
-
   // Initialize without starting Bluetooth (requires user gesture)
   useEffect(() => {
     const initializeProtocol = async () => {
-      console.log('🔧 Initializing BitChat protocol...');
-      addDebugLog('🔧 BitChat component mounted');
-      addDebugLog('📱 Checking Bluetooth compatibility...');
-      addDebugLog('✅ BitChat protocol ready');
-      addDebugLog('💡 Click "Start Discovery" to begin scanning');
-      addDebugLog('🚧 NOTE: Noise protocol implementation needed to avoid browser pairing');
-      console.log('📡 BitChat protocol initialized');
+      // Start networking automatically for passive discovery
+      try {
+        await meshManager.startNetworking();
+        setStatusMessage('BitChat is listening for nearby devices...');
+      } catch (error) {
+        setStatusMessage('Failed to start networking');
+      }
     };
 
     initializeProtocol();
@@ -91,8 +50,6 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
     // Set up event listeners for network events
     const handleNetworkDiscovered = (event: any) => {
       const network = event.detail;
-      console.log('🕸️ Network discovered:', network);
-      addDebugLog(`🕸️ Discovered network: ${network.name} (${network.nodes.length} nodes)`);
       setAvailableNetworks(prev => {
         const existing = prev.find(n => n.id === network.id);
         if (existing) return prev;
@@ -104,8 +61,6 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
 
     const handleNodeConnected = (event: any) => {
       const node = event.detail;
-      console.log('👥 Node connected:', node);
-      addDebugLog(`👥 Node connected: ${node.name} (signal: ${node.signal}dBm)`);
       setConnectedNodes(prev => {
         const existing = prev.find(n => n.id === node.id);
         if (existing) return prev;
@@ -115,14 +70,11 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
 
     const handleNodeDisconnected = (event: any) => {
       const node = event.detail;
-      console.log('👥 Node disconnected:', node);
-      addDebugLog(`👥 Node disconnected: ${node.name}`);
       setConnectedNodes(prev => prev.filter(n => n.id !== node.id));
     };
 
     const handleNetworkUpdated = (event: any) => {
       const network = event.detail;
-      addDebugLog(`🔄 Network updated: ${network.name}`);
       setAvailableNetworks(prev => 
         prev.map(n => n.id === network.id ? network : n)
       );
@@ -132,11 +84,37 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
       }
     };
 
+    const handleBluetoothScanComplete = (event: any) => {
+      const { devicesFound, error } = event.detail;
+      if (error) {
+        setStatusMessage(`Scan failed: ${error}`);
+      } else if (devicesFound === 0) {
+        setStatusMessage('No BitChat devices found. Listening for connections...');
+        setIsPassiveMode(true);
+      } else {
+        setStatusMessage(`Found ${devicesFound} devices. Check browser dialog.`);
+        setIsPassiveMode(false);
+      }
+      setIsDiscovering(false);
+    };
+
+    const handleBluetoothPassiveMode = (event: any) => {
+      const { isActive, message } = event.detail;
+      setIsPassiveMode(isActive);
+      if (isActive) {
+        setStatusMessage(message || 'Listening for BitChat devices...');
+      } else {
+        setStatusMessage('Discovery stopped');
+      }
+    };
+
     // Add event listeners
     meshManager.addEventListener('networkDiscovered', handleNetworkDiscovered);
     meshManager.addEventListener('nodeConnected', handleNodeConnected);
     meshManager.addEventListener('nodeDisconnected', handleNodeDisconnected);
     meshManager.addEventListener('networkUpdated', handleNetworkUpdated);
+    meshManager.addEventListener('bluetoothScanComplete', handleBluetoothScanComplete);
+    meshManager.addEventListener('bluetoothPassiveMode', handleBluetoothPassiveMode);
 
     return () => {
       // Clean up event listeners
@@ -144,13 +122,12 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
       meshManager.removeEventListener('nodeConnected', handleNodeConnected);
       meshManager.removeEventListener('nodeDisconnected', handleNodeDisconnected);
       meshManager.removeEventListener('networkUpdated', handleNetworkUpdated);
+      meshManager.removeEventListener('bluetoothScanComplete', handleBluetoothScanComplete);
+      meshManager.removeEventListener('bluetoothPassiveMode', handleBluetoothPassiveMode);
     };
   }, []);
 
   const handleConnectToNetwork = async (network: MeshNetwork) => {
-    console.log('Connecting to network:', network.name);
-    addDebugLog(`🔗 Connecting to network: ${network.name}`);
-    
     try {
       setAvailableNetworks(prev => {
         const existing = prev.find(n => n.id === network.id);
@@ -159,7 +136,6 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
       });
 
       setCurrentNetwork(network);
-      addDebugLog(`✅ Connected to ${network.name} successfully`);
       setStatusMessage(`Connected to ${network.name} successfully!`);
       onStatusChange?.(`Connected to ${network.name}`, network);
       
@@ -169,16 +145,13 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
       const publicChannel = channels.find(ch => ch.isDefault);
       if (publicChannel) {
         setSelectedChannel(publicChannel.id);
-        addDebugLog(`📱 Joined ${publicChannel.name} channel`);
         onChannelJoin?.(publicChannel.id, publicChannel.name);
       }
       
       setConnectedNodes(network.nodes);
       
     } catch (error) {
-      console.error('Error connecting to network:', error);
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      addDebugLog(`❌ Connection failed: ${errorMsg}`);
       setStatusMessage(`Connection error: ${errorMsg}`);
       onStatusChange?.('Connection failed');
     }
@@ -186,7 +159,6 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
 
   const handleJoinChannel = (channel: Channel) => {
     setSelectedChannel(channel.id);
-    addDebugLog(`📱 Joined ${channel.name} channel`);
     setStatusMessage(`Joined ${channel.name} channel`);
     onChannelJoin?.(channel.id, channel.name);
   };
@@ -205,10 +177,16 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
               <span className="text-green-400 text-xs font-medium">Connected</span>
             </div>
           )}
-          {isDiscovering && !currentNetwork && (
+          {isPassiveMode && !currentNetwork && (
             <div className="flex items-center space-x-2 px-3 py-1 bg-blue-500/20 rounded-full border border-blue-500/30">
               <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-              <span className="text-blue-400 text-xs font-medium">Discovering</span>
+              <span className="text-blue-400 text-xs font-medium">Listening</span>
+            </div>
+          )}
+          {isDiscovering && !currentNetwork && (
+            <div className="flex items-center space-x-2 px-3 py-1 bg-purple-500/20 rounded-full border border-purple-500/30">
+              <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse"></div>
+              <span className="text-purple-400 text-xs font-medium">Discovering</span>
             </div>
           )}
         </div>
@@ -217,8 +195,9 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
       {/* Instructions */}
       <div className="mb-4 p-3 bg-blue-900/20 border border-blue-500/30 rounded-lg flex-shrink-0">
         <p className="text-blue-200 text-sm">
-          <strong>BitChat Discovery:</strong> Click "Start Discovery" to scan for nearby BitChat devices. 
-          Browser pairing dialog may appear (temporary until Noise protocol is implemented).
+          <strong>BitChat Discovery:</strong> BitChat is always listening passively for nearby devices.
+          {isPassiveMode ? ' Currently in passive listening mode.' : ' Actively scanning for devices.'}
+          Use "Active Discovery" to open a device selection dialog if needed.
         </p>
       </div>
 
@@ -337,18 +316,11 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
           <div className="text-center py-8">
             <div className="text-6xl mb-4">🔍</div>
             <h3 className="text-xl font-semibold text-white mb-2">
-              Ready to Discover Networks
+              BitChat is Listening
             </h3>
             <p className="text-gray-400 mb-6">
-              Click the button below to start scanning for nearby BitChat devices.
-              Note: Browser pairing dialog may appear (temporary limitation).
+              BitChat is always listening passively for nearby devices. Devices will automatically connect when they come into range.
             </p>
-            <button
-              onClick={startDiscovery}
-              className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold rounded-lg transition-all duration-200 transform hover:scale-105 shadow-lg"
-            >
-              🔍 Start Discovery
-            </button>
           </div>
         )}
 
@@ -369,28 +341,6 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
           </div>
         )}
 
-        {/* Debug Terminal Section */}
-        <div>
-          <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-            💻 Debug Terminal
-          </h3>
-          <div className="bg-gray-900/80 border border-gray-600/30 rounded-lg p-4 font-mono text-sm max-h-64 overflow-y-auto">
-            {debugLogs.length === 0 ? (
-              <div className="text-gray-400 italic">
-                Debug logs will appear here when you start discovery...
-                This will help track the pairing issue and Noise protocol implementation.
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {debugLogs.map((log, index) => (
-                  <div key={index} className="text-green-400">
-                    {log}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
       </div>
     </div>
   );
