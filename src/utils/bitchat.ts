@@ -1,6 +1,6 @@
 // BitChat Protocol Implementation
 // Unified implementation using proper bitchat-qudag WASM protocol
-// with Web Bluetooth and Nostr transports
+// with Web Bluetooth transport for offline peer-to-peer messaging
 
 export * from './bitchat-core';
 export * from './bluetooth-transport';
@@ -14,20 +14,19 @@ import { NostrTransport } from './nostr-transport';
 export async function createBitChatInstance(): Promise<BitChatProtocol> {
   const bitchat = new BitChatProtocol();
 
-  // Add Nostr transport for online connectivity (primary transport)
-  const nostrTransport = new NostrTransport();
-  bitchat.addTransport(nostrTransport);
-  console.log('🟣 Added Nostr transport (primary)');
-
-  // Add Bluetooth transport only if explicitly requested (optional)
-  // Bluetooth requires browser permissions and pairing dialogs
-  if (WebBluetoothTransport.isSupported() && import.meta.env.DEV) {
+  // Add Bluetooth transport as primary for offline peer-to-peer communication
+  if (WebBluetoothTransport.isSupported()) {
     const bluetoothTransport = new WebBluetoothTransport();
     bitchat.addTransport(bluetoothTransport);
-    console.log('🔵 Added Bluetooth transport (development only)');
+    console.log('� Added Bluetooth transport (primary for offline messaging)');
   } else {
-    console.log('🔵 Bluetooth transport disabled (production mode)');
+    console.log('� Bluetooth not supported - offline messaging unavailable');
   }
+
+  // Add Nostr transport for online connectivity (optional)
+  const nostrTransport = new NostrTransport();
+  bitchat.addTransport(nostrTransport);
+  console.log('� Added Nostr transport (online connectivity)');
 
   // Initialize the protocol
   await bitchat.initialize();
@@ -59,4 +58,43 @@ export async function getIdentity(): Promise<any> {
 export async function getPeers(): Promise<any[]> {
   const bitchat = await getBitChatInstance();
   return bitchat.getPeers();
+}
+
+// Bluetooth permission and pairing functions
+export async function requestBluetoothPermissions(): Promise<boolean> {
+  if (!WebBluetoothTransport.isSupported()) {
+    console.warn('Bluetooth not supported in this browser');
+    return false;
+  }
+
+  try {
+    // Check current permission state
+    const result = await navigator.permissions.query({ name: 'bluetooth' as PermissionName });
+    if (result.state === 'granted') {
+      console.log('Bluetooth permission already granted');
+      return true;
+    }
+
+    // Request permission via device selection (user gesture required)
+    console.log('Requesting Bluetooth permission...');
+    const device = await (navigator as any).bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: ['bitchat-service'], // BitChat service UUID
+    });
+
+    if (device) {
+      console.log('Bluetooth device selected:', device.name);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Bluetooth permission request failed:', error);
+    return false;
+  }
+}
+
+export async function startBluetoothDiscovery(): Promise<void> {
+  const bitchat = await getBitChatInstance();
+  console.log('Starting Bluetooth discovery...');
+  await bitchat.startBluetoothDiscovery();
 }

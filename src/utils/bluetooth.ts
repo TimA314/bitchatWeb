@@ -9,7 +9,7 @@ declare global {
   interface Bluetooth {
     requestDevice(options?: RequestDeviceOptions): Promise<BluetoothDevice>;
     getAvailability(): Promise<boolean>;
-    getDevices?(): Promise<BluetoothDevice[]>;
+    getDevices(): Promise<BluetoothDevice[]>;
   }
   
   interface RequestDeviceOptions {

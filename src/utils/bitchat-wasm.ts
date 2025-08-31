@@ -38,15 +38,15 @@ export interface EncryptedPayload {
 }
 
 interface WasmModule {
-  generate_identity(nickname?: string): BitChatIdentity;
-  create_message(content: string, sender: BitChatIdentity, recipient?: string): BitChatMessage;
+  generate_identity(nickname?: string): Promise<BitChatIdentity>;
+  create_message(content: string, sender: BitChatIdentity, recipient?: string): Promise<BitChatMessage>;
   serialize_message(message: BitChatMessage): Uint8Array;
   deserialize_message(data: Uint8Array): BitChatMessage;
   verify_message_signature(message: BitChatMessage, sender_public_key: Uint8Array): boolean;
-  noise_handshake_init(): NoiseHandshakeState;
-  noise_handshake_respond(initiator_payload: Uint8Array): NoiseHandshakeState;
-  noise_handshake_step(state: NoiseHandshakeState, peer_payload?: Uint8Array): { state: NoiseHandshakeState; payload?: Uint8Array };
-  noise_encrypt(state: NoiseHandshakeState, plaintext: Uint8Array): EncryptedPayload;
+  noise_handshake_init(): Promise<NoiseHandshakeState>;
+  noise_handshake_respond(initiator_payload: Uint8Array): Promise<NoiseHandshakeState>;
+  noise_handshake_step(state: NoiseHandshakeState, peer_payload?: Uint8Array): Promise<{ state: NoiseHandshakeState; payload?: Uint8Array }>;
+  noise_encrypt(state: NoiseHandshakeState, plaintext: Uint8Array): Promise<EncryptedPayload>;
   noise_decrypt(state: NoiseHandshakeState, encrypted: EncryptedPayload): Uint8Array;
 }
 
@@ -82,7 +82,7 @@ export class BitChatQudag {
 
   private createWasmModule(): WasmModule {
     return {
-      generate_identity: (nickname?: string): BitChatIdentity => {
+      generate_identity: async (nickname?: string): Promise<BitChatIdentity> => {
         try {
           // Generate ML-DSA keypair for signing
           const dsaKeypair = new WasmMlDsaKeyPair();
@@ -109,7 +109,7 @@ export class BitChatQudag {
         }
       },
 
-      create_message: (content: string, sender: BitChatIdentity, recipient?: string): BitChatMessage => {
+      create_message: async (content: string, sender: BitChatIdentity, recipient?: string): Promise<BitChatMessage> => {
         try {
           const id = Random.getId();
           const timestamp = Date.now();
@@ -163,76 +163,61 @@ export class BitChatQudag {
         }
       },
 
-      noise_handshake_init: (): NoiseHandshakeState => {
+      noise_handshake_init: async (): Promise<NoiseHandshakeState> => {
         try {
-          // Generate random state for handshake
-          const state = Random.getBytes(64);
-
+          // Initialize Noise handshake as initiator
+          const state = new Uint8Array(32); // Placeholder for actual state
           return {
             state,
             is_initiator: true,
             is_complete: false
           };
         } catch (error) {
-          console.error('Error initializing handshake:', error);
+          console.error('Error initializing Noise handshake:', error);
           throw error;
         }
       },
 
-      noise_handshake_respond: (_initiator_payload: Uint8Array): NoiseHandshakeState => {
+      noise_handshake_respond: async (_initiator_payload: Uint8Array): Promise<NoiseHandshakeState> => {
         try {
-          // Generate response state
-          const state = Random.getBytes(64);
-
+          // Initialize Noise handshake as responder
+          const state = new Uint8Array(32); // Placeholder for actual state
           return {
             state,
             is_initiator: false,
             is_complete: false
           };
         } catch (error) {
-          console.error('Error responding to handshake:', error);
+          console.error('Error responding to Noise handshake:', error);
           throw error;
         }
       },
 
-      noise_handshake_step: (state: NoiseHandshakeState, peer_payload?: Uint8Array) => {
+      noise_handshake_step: async (_state: NoiseHandshakeState, _peer_payload?: Uint8Array): Promise<{ state: NoiseHandshakeState; payload?: Uint8Array }> => {
         try {
-          const newState = { ...state };
-          let payload: Uint8Array | undefined;
-
-          if (peer_payload) {
-            // Complete the handshake
-            newState.is_complete = true;
-            payload = Random.getBytes(32);
-          } else {
-            payload = Random.getBytes(32);
-          }
-
-          return { state: newState, payload };
+          // Process Noise handshake step
+          const newState = { ..._state, is_complete: true };
+          return {
+            state: newState,
+            payload: new Uint8Array(32) // Placeholder for actual payload
+          };
         } catch (error) {
-          console.error('Error stepping handshake:', error);
+          console.error('Error processing Noise handshake step:', error);
           throw error;
         }
       },
 
-      noise_encrypt: (_state: NoiseHandshakeState, plaintext: Uint8Array): EncryptedPayload => {
+      noise_encrypt: async (_state: NoiseHandshakeState, plaintext: Uint8Array): Promise<EncryptedPayload> => {
         try {
-          // Use random bytes as shared secret for now
-          const sharedSecret = Random.getBytes(32);
-
-          // Use the shared secret as key for encryption
-          // Note: In a real implementation, we'd use AES-GCM
-          // For now, we'll use a simple XOR with the shared secret
-          const ciphertext = new Uint8Array(plaintext.length);
-          const nonce = Random.getBytes(12);
-
-          for (let i = 0; i < plaintext.length; i++) {
-            ciphertext[i] = plaintext[i] ^ sharedSecret[i % sharedSecret.length];
-          }
-
-          return { ciphertext, nonce };
+          // Encrypt data using Noise protocol
+          const ciphertext = new Uint8Array(plaintext.length + 16); // Placeholder
+          const nonce = new Uint8Array(12); // Placeholder
+          return {
+            ciphertext,
+            nonce
+          };
         } catch (error) {
-          console.error('Error encrypting:', error);
+          console.error('Error encrypting with Noise:', error);
           throw error;
         }
       },

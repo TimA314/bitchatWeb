@@ -1,5 +1,8 @@
 // Web Bluetooth Transport for BitChat
 // Implements BLE-based mesh networking for offline peer-to-peer messaging
+// Note: Web Bluetooth has limitations - true passive discovery isn't possible in browsers
+
+/// <reference path="../types/bluetooth.d.ts" />
 
 import type { BitChatTransport } from './bitchat-core';
 
@@ -33,14 +36,14 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
   }
 
   // Check if BitChat is compatible with current browser
-  static getBrowserCompatibility(): { 
-    supported: boolean; 
-    browser: string; 
+  static getBrowserCompatibility(): {
+    supported: boolean;
+    browser: string;
     recommendations?: string[];
   } {
     const userAgent = navigator.userAgent;
     const isBrave = (navigator as any).brave && (navigator as any).brave.isBrave;
-    
+
     if (isBrave) {
       return {
         supported: false,
@@ -51,14 +54,14 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
         ]
       };
     }
-    
+
     if (userAgent.includes('Chrome') || userAgent.includes('Edg')) {
       return {
         supported: this.isSupported(),
-        browser: userAgent.includes('Edg') ? 'Edge' : 'Chrome'
+        browser: 'Chrome'
       };
     }
-    
+
     if (userAgent.includes('Firefox')) {
       return {
         supported: false,
@@ -69,7 +72,7 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
         ]
       };
     }
-    
+
     return {
       supported: this.isSupported(),
       browser: 'Unknown'
@@ -82,10 +85,11 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
 
     try {
       this.isInitialized = true;
-      this.dispatchEvent(new CustomEvent('initialized'));
 
       // Start passive discovery immediately
       this.startPassiveDiscovery();
+
+      this.dispatchEvent(new CustomEvent('initialized'));
     } catch (error) {
       console.error('Failed to initialize Bluetooth transport:', error);
       throw error;
@@ -101,7 +105,7 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
     }
 
     // Disconnect from all peers
-    for (const peer of this.peers.values()) {
+    for (const peer of Array.from(this.peers.values())) {
       if (peer.server?.connected) {
         peer.server.disconnect();
       }
@@ -202,58 +206,60 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
 
   // Start passive discovery mode (always listening)
   private startPassiveDiscovery(): void {
+    console.log('🔍 Starting BitChat Bluetooth discovery with Nostr coordination...');
+
+    // Announce our Bluetooth availability via Nostr (if available)
+    this.announceBluetoothAvailability();
+
     // Set up periodic scanning for devices without user interaction
     this.reconnectInterval = window.setInterval(async () => {
       try {
+        console.log('🔍 Scanning for BitChat devices...');
+
         // Try to discover devices without opening dialog (limited by Web Bluetooth API)
-        // This will only work if devices are actively advertising
         if (navigator.bluetooth) {
           // Attempt passive discovery - this may not find devices but keeps us ready
           this.dispatchEvent(new CustomEvent('passiveMode', {
-            detail: { isActive: true, message: 'Listening for BitChat devices...' }
+            detail: { isActive: true, message: 'BitChat Bluetooth ready - use "Active Discovery" to connect' }
           }));
 
-          // Try to automatically connect to known devices or open dialog periodically
-          // This is a workaround since Web Bluetooth doesn't support true passive discovery
-          try {
-            const device = await navigator.bluetooth.requestDevice({
-              filters: [
-                { services: [BITCHAT_SERVICE_UUID] },
-                { namePrefix: 'BitChat' },
-                { namePrefix: 'bitChat' },
-                { namePrefix: 'BITCHAT' }
-              ],
-              optionalServices: [BITCHAT_SERVICE_UUID],
-              acceptAllDevices: false
-            });
-
-            // If we get here, user selected a device - connect to it
-            await this.connectToDevice(device);
-
-            this.dispatchEvent(new CustomEvent('scanComplete', {
-              detail: { devicesFound: 1, error: null, passiveMode: true }
-            }));
-
-          } catch (error) {
-            // User cancelled or no devices found - this is expected in passive mode
-            if ((error as any).name === 'NotFoundError') {
-              // No devices found, continue listening
-              this.dispatchEvent(new CustomEvent('scanComplete', {
-                detail: { devicesFound: 0, error: null, passiveMode: true }
-              }));
-            }
-            // For other errors, silently continue
-          }
+          // Note: Web Bluetooth doesn't support true passive discovery
+          // The dialog must be opened by user gesture when they want to connect
         }
       } catch (error) {
-        // Silent fail - passive discovery limitations are expected
+        console.error('❌ Discovery error:', error);
       }
-    }, 10000); // Check every 10 seconds (less aggressive to avoid annoying users)
+    }, 10000); // Check every 10 seconds (less aggressive)
 
     // Emit initial passive mode event
     this.dispatchEvent(new CustomEvent('passiveMode', {
-      detail: { isActive: true, message: 'BitChat is listening for nearby devices' }
+      detail: { isActive: true, message: 'BitChat Bluetooth ready - waiting for connections' }
     }));
+
+    console.log('✅ Bluetooth discovery started - use Active Discovery button to connect to devices');
+  }
+
+  // Announce our Bluetooth availability via Nostr for coordination
+  private announceBluetoothAvailability(): void {
+    try {
+      // Create a Bluetooth availability announcement
+      const announcement = {
+        type: 'bluetooth_available',
+        deviceName: `BitChat-${Date.now().toString().slice(-4)}`,
+        capabilities: ['ble', 'gatt_server'],
+        timestamp: Date.now(),
+        userAgent: navigator.userAgent
+      };
+
+      // Emit event that Nostr transport can listen to
+      this.dispatchEvent(new CustomEvent('bluetoothAnnouncement', {
+        detail: announcement
+      }));
+
+      console.log('📡 Announced Bluetooth availability for Nostr coordination');
+    } catch (error) {
+      console.warn('Failed to announce Bluetooth availability:', error);
+    }
   }
 
   // Connect to a discovered Bluetooth device

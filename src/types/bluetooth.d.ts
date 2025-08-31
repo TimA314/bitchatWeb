@@ -26,6 +26,7 @@ declare global {
     id: string;
     name?: string;
     gatt?: BluetoothRemoteGATTServer;
+    addEventListener(type: 'gattserverdisconnected', listener: () => void): void;
   }
   
   interface BluetoothRemoteGATTServer {
@@ -33,6 +34,23 @@ declare global {
     device: BluetoothDevice;
     connect(): Promise<BluetoothRemoteGATTServer>;
     disconnect(): void;
+    getPrimaryService(service: BluetoothServiceUUID): Promise<BluetoothRemoteGATTService>;
+  }
+  
+  interface BluetoothRemoteGATTService {
+    uuid: string;
+    device: BluetoothDevice;
+    getCharacteristic(characteristic: string): Promise<BluetoothRemoteGATTCharacteristic>;
+  }
+  
+  interface BluetoothRemoteGATTCharacteristic {
+    uuid: string;
+    service: BluetoothRemoteGATTService;
+    value?: DataView;
+    writeValue(value: BufferSource): Promise<void>;
+    startNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
+    stopNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
+    addEventListener(type: 'characteristicvaluechanged', listener: (event: any) => void): void;
   }
   
   type BluetoothServiceUUID = string | number;

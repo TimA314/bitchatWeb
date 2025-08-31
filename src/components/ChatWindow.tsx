@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { requestBluetoothPermissions, startBluetoothDiscovery } from '../utils/bitchat';
 
 interface Message {
   id: string;
@@ -20,6 +21,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   currentUser: _currentUser
 }) => {
   const [inputText, setInputText] = useState('');
+  const [bluetoothEnabled, setBluetoothEnabled] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -45,6 +47,22 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
     }
   };
 
+  const handleEnableBluetooth = async () => {
+    const granted = await requestBluetoothPermissions();
+    setBluetoothEnabled(granted);
+    if (granted) {
+      console.log('Bluetooth enabled for BitChat');
+      // Start discovery after enabling
+      try {
+        await startBluetoothDiscovery();
+      } catch (error) {
+        console.error('Failed to start Bluetooth discovery:', error);
+      }
+    } else {
+      console.warn('Bluetooth permission denied');
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -59,6 +77,17 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
           <span className="font-medium hidden sm:inline">Online</span>
           <span className="font-medium sm:hidden">●</span>
+          <button
+            onClick={handleEnableBluetooth}
+            className={`ml-2 px-2 py-1 text-xs rounded-lg transition-colors ${
+              bluetoothEnabled
+                ? 'bg-green-600 text-white'
+                : 'bg-blue-600 hover:bg-blue-700 text-white'
+            }`}
+            title={bluetoothEnabled ? 'Bluetooth enabled' : 'Enable Bluetooth for offline messaging'}
+          >
+            {bluetoothEnabled ? 'BT ✓' : 'BT'}
+          </button>
         </div>
       </div>
       

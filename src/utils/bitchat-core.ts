@@ -2,7 +2,7 @@
 // Uses bitchat-qudag WASM when available, with fallback implementations
 // Supports both BLE mesh networking and Nostr for hybrid operation
 
-import { BitChatQudag } from './bitchat-wasm.js';
+import { BitChatQudag } from './bitchat-wasm';
 
 // Core BitChat types based on the whitepaper specification
 export interface BitChatMessage {
@@ -135,15 +135,70 @@ export class BitChatProtocol extends EventTarget {
   // Add a transport layer (BLE, Nostr, etc.)
   addTransport(transport: BitChatTransport): void {
     this.transports.push(transport);
-    
+
     // Set up event listeners
     transport.addEventListener('messageReceived', (event) => {
       this.handleIncomingMessage(event.data, event.transport);
     });
-    
+
     transport.addEventListener('peerDiscovered', (event) => {
       this.handlePeerDiscovered(event.peer);
     });
+
+    // Handle Bluetooth availability announcements
+    transport.addEventListener('bluetoothAnnouncement', (event) => {
+      this.handleBluetoothAnnouncement(event.detail, transport);
+    });
+
+    // Handle Bluetooth coordination requests
+    transport.addEventListener('bluetoothCoordination', (event) => {
+      this.handleBluetoothCoordination(event.detail, transport);
+    });
+  }
+
+  // Handle Bluetooth availability announcements
+  private handleBluetoothAnnouncement(announcement: any, sourceTransport: BitChatTransport): void {
+    console.log('📡 Bluetooth availability announced:', announcement);
+
+    // Broadcast this announcement via other transports (especially Nostr)
+    for (const transport of this.transports) {
+      if (transport !== sourceTransport && transport.constructor.name === 'NostrTransport') {
+        try {
+          // Send Bluetooth availability via Nostr
+          (transport as any).sendBluetoothCoordination('broadcast', {
+            type: 'bluetooth_available',
+            announcement,
+            sourceTransport: sourceTransport.constructor.name
+          });
+        } catch (error) {
+          console.warn('Failed to broadcast Bluetooth availability via Nostr:', error);
+        }
+      }
+    }
+  }
+
+  // Handle Bluetooth coordination requests
+  private handleBluetoothCoordination(coordination: any, sourceTransport: BitChatTransport): void {
+    console.log('🔗 Bluetooth coordination received:', coordination);
+
+    // If this is a Bluetooth availability announcement from Nostr, notify Bluetooth transport
+    if (coordination.type === 'bluetooth_available' && sourceTransport.constructor.name === 'NostrTransport') {
+      const bluetoothTransport = this.transports.find(t => t.constructor.name === 'WebBluetoothTransport');
+      if (bluetoothTransport) {
+        (bluetoothTransport as unknown as EventTarget).dispatchEvent(new CustomEvent('peerDiscovered', {
+          detail: {
+            peer: {
+              fingerprint: coordination.announcement.deviceName || 'Unknown',
+              publicKey: new Uint8Array(),
+              nickname: 'Bluetooth Device',
+              lastSeen: Date.now(),
+              isOnline: true,
+              transport: 'ble'
+            }
+          }
+        }));
+      }
+    }
   }
 
   // Send a message
@@ -375,6 +430,17 @@ export class BitChatProtocol extends EventTarget {
 
     this.dispatchEvent(new CustomEvent('stopped'));
     console.log('🛑 BitChat Protocol stopped');
+  }
+
+  // Start Bluetooth discovery
+  async startBluetoothDiscovery(): Promise<void> {
+    const bluetoothTransport = this.transports.find(t => t.constructor.name === 'WebBluetoothTransport');
+    if (bluetoothTransport) {
+      await (bluetoothTransport as any).discoverPeersWithDialog();
+      console.log('Bluetooth discovery initiated');
+    } else {
+      console.warn('Bluetooth transport not found');
+    }
   }
 }
 

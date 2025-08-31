@@ -1,7 +1,10 @@
 // BitChat Protocol Mesh Networking
 // Compatibility layer for existing UI components
 
-import { getBitChatInstance, type BitChatPeer, BitChatProtocol } from './bitchat';
+/// <reference path="../types/bluetooth.d.ts" />
+
+import { getBitChatInstance } from './bitchat';
+import { type BitChatPeer, BitChatProtocol } from './bitchat-core';
 import { WebBluetoothTransport } from './bluetooth-transport';
 
 // Legacy compatibility interfaces for existing UI
@@ -249,10 +252,15 @@ export class MeshNetworkManager extends EventTarget {
   async startActiveBluetoothDiscovery(): Promise<void> {
     await this.initializeBitChat();
     if (this.bluetoothTransport) {
-      await (this.bluetoothTransport as any).discoverPeersWithDialog();
+      await this.bluetoothTransport.discoverPeersWithDialog();
     } else {
       throw new Error('Bluetooth transport not initialized');
     }
+  }
+
+  // Manual discovery - alias for active discovery
+  async startManualDiscovery(): Promise<void> {
+    return this.startActiveBluetoothDiscovery();
   }
 }
 

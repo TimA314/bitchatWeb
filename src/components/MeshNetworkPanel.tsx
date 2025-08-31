@@ -24,7 +24,41 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
   const [availableChannels, setAvailableChannels] = useState<Channel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [isDiscovering, setIsDiscovering] = useState(false);
+  const [bluetoothSupported, setBluetoothSupported] = useState<boolean | null>(null);
   const [isPassiveMode, setIsPassiveMode] = useState(true);
+
+  // Check Bluetooth support on mount
+  useEffect(() => {
+    const checkBluetoothSupport = () => {
+      const supported = 'bluetooth' in navigator && !!navigator.bluetooth;
+      setBluetoothSupported(supported);
+      console.log('🔵 Bluetooth support check:', supported);
+    };
+
+    checkBluetoothSupport();
+  }, []);
+
+  // Manual device discovery function
+  const handleManualDiscovery = async () => {
+    setIsDiscovering(true);
+    setStatusMessage('Opening Bluetooth device selection dialog...');
+
+    try {
+      // Check if Bluetooth is supported
+      if (!('bluetooth' in navigator)) {
+        throw new Error('Web Bluetooth is not supported in this browser');
+      }
+
+      // Trigger manual Bluetooth device discovery
+      await meshManager.startManualDiscovery();
+      setStatusMessage('Device selection dialog opened - select a BitChat-compatible Bluetooth device');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setStatusMessage(`Discovery failed: ${errorMessage}`);
+      setIsDiscovering(false);
+      console.error('Manual discovery error:', error);
+    }
+  };
 
   // Generate default channel when connected
   const generateChannels = (network: MeshNetwork): Channel[] => {
@@ -39,7 +73,7 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
       // Start networking automatically for passive discovery
       try {
         await meshManager.startNetworking();
-        setStatusMessage('BitChat is listening for nearby devices...');
+        setStatusMessage('BitChat Bluetooth scanning active - use "Active Discovery" to connect to devices');
       } catch (error) {
         setStatusMessage('Failed to start networking');
       }
@@ -87,12 +121,12 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
     const handleBluetoothScanComplete = (event: any) => {
       const { devicesFound, error } = event.detail;
       if (error) {
-        setStatusMessage(`Scan failed: ${error}`);
+        setStatusMessage(`Bluetooth scan failed: ${error}`);
       } else if (devicesFound === 0) {
-        setStatusMessage('No BitChat devices found. Listening for connections...');
+        setStatusMessage('No BitChat devices found via Bluetooth. Use "Active Discovery" to try again.');
         setIsPassiveMode(true);
       } else {
-        setStatusMessage(`Found ${devicesFound} devices. Check browser dialog.`);
+        setStatusMessage(`Found ${devicesFound} Bluetooth devices. Check browser dialog.`);
         setIsPassiveMode(false);
       }
       setIsDiscovering(false);
@@ -189,16 +223,42 @@ export const MeshNetworkPanel: React.FC<MeshNetworkPanelProps> = ({
               <span className="text-purple-400 text-xs font-medium">Discovering</span>
             </div>
           )}
+          {!currentNetwork && bluetoothSupported && (
+            <button
+              onClick={handleManualDiscovery}
+              disabled={isDiscovering}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white text-sm font-medium rounded-lg transition-colors duration-200 flex items-center gap-2"
+            >
+              <span>🔍</span>
+              {isDiscovering ? 'Discovering...' : 'Active Discovery'}
+            </button>
+          )}
         </div>
       </div>
 
       {/* Instructions */}
       <div className="mb-4 p-3 bg-blue-900/20 border border-blue-500/30 rounded-lg flex-shrink-0">
-        <p className="text-blue-200 text-sm">
-          <strong>BitChat Discovery:</strong> BitChat is always listening passively for nearby devices.
-          {isPassiveMode ? ' Currently in passive listening mode.' : ' Actively scanning for devices.'}
-          Use "Active Discovery" to open a device selection dialog if needed.
-        </p>
+        <div className="flex items-start gap-3">
+          <div className={`flex-shrink-0 w-3 h-3 rounded-full mt-1 ${
+            bluetoothSupported === true ? 'bg-green-400' :
+            bluetoothSupported === false ? 'bg-red-400' : 'bg-yellow-400'
+          }`}></div>
+          <div>
+            <p className="text-blue-200 text-sm mb-1">
+              <strong>BitChat Bluetooth Status:</strong> {
+                bluetoothSupported === true ? '✅ Bluetooth supported' :
+                bluetoothSupported === false ? '❌ Bluetooth not supported in this browser' :
+                '⏳ Checking Bluetooth support...'
+              }
+            </p>
+            {bluetoothSupported && (
+              <p className="text-blue-200 text-sm">
+                Use the "Active Discovery" button to open a device selection dialog and connect to nearby BitChat devices.
+                Both devices need to use this button to establish a connection.
+              </p>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Status */}

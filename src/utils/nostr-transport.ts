@@ -67,7 +67,7 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
     if (!this.isInitialized) return;
 
     // Close all websockets
-    for (const ws of this.websockets.values()) {
+    for (const ws of Array.from(this.websockets.values())) {
       ws.close();
     }
     this.websockets.clear();
@@ -122,7 +122,7 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
         connectedRelays: this.websockets.size
       });
 
-      for (const ws of this.websockets.values()) {
+      for (const ws of Array.from(this.websockets.values())) {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(message);
         }
@@ -272,10 +272,31 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
         const isPresenceAnnouncement = event.tags?.some((tag: string[]) =>
           tag[0] === 't' && tag[1] === 'presence'
         );
+        const isBluetoothCoordination = event.tags?.some((tag: string[]) =>
+          tag[0] === 't' && tag[1] === 'bluetooth_coordination'
+        );
 
-        console.log(`🔍 Event analysis: kind=${event.kind}, hasBitChatTag=${isBitChatMessage}, hasPresenceTag=${isPresenceAnnouncement}, contentLength=${event.content?.length || 0}`);
+        console.log(`🔍 Event analysis: kind=${event.kind}, hasBitChatTag=${isBitChatMessage}, hasPresenceTag=${isPresenceAnnouncement}, hasBluetoothTag=${isBluetoothCoordination}, contentLength=${event.content?.length || 0}`);
 
-        if (isPresenceAnnouncement && event.content) {
+        if (isBluetoothCoordination && event.content) {
+          // Handle Bluetooth coordination messages
+          console.log(`🔗 Bluetooth coordination from ${event.pubkey.substring(0, 16)}`);
+          try {
+            const hexMatches = event.content.match(/.{2}/g);
+            if (hexMatches) {
+              const data = new Uint8Array(hexMatches.map((byte: string) => parseInt(byte, 16)));
+              const decoder = new TextDecoder();
+              const coordinationData = JSON.parse(decoder.decode(data));
+              console.log('🔧 Bluetooth coordination data:', coordinationData);
+
+              // Handle the coordination request
+              this.handleBluetoothCoordination(event.pubkey, coordinationData);
+            }
+          } catch (decodeError) {
+            console.log('🔧 Could not decode Bluetooth coordination data');
+          }
+        }
+        else if (isPresenceAnnouncement && event.content) {
           // Handle presence announcements
           console.log(`👋 Presence announcement from ${event.pubkey.substring(0, 16)}`);
           try {
@@ -470,6 +491,66 @@ export class NostrTransport extends EventTarget implements BitChatTransport {
     if (index !== -1) {
       this.relays.splice(index, 1);
       console.log(`➖ Removed relay: ${url}`);
+    }
+  }
+
+  // Handle Bluetooth coordination requests
+  handleBluetoothCoordination(peerPubkey: string, coordinationData: any): void {
+    console.log(`🔗 Bluetooth coordination request from ${peerPubkey}:`, coordinationData);
+
+    // Emit event for Bluetooth transport to handle
+    this.dispatchEvent(new CustomEvent('bluetoothCoordination', {
+      detail: {
+        peerPubkey,
+        coordinationData
+      }
+    }));
+  }
+
+  // Send Bluetooth coordination message
+  async sendBluetoothCoordination(peerPubkey: string, coordinationData: any): Promise<void> {
+    if (!this.isInitialized || !this.privateKey) {
+      throw new Error('Nostr transport not initialized');
+    }
+
+    try {
+      const content = Array.from(new TextEncoder().encode(JSON.stringify(coordinationData)))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+
+      const event: any = {
+        kind: 30000,
+        content,
+        tags: [
+          ['t', 'bitchat'],
+          ['t', 'bluetooth_coordination'],
+          ['p', peerPubkey],
+          ['client', 'bitchat-pwa']
+        ],
+        created_at: Math.floor(Date.now() / 1000),
+        pubkey: this.publicKey
+      };
+
+      // Generate event ID
+      const serialized = JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content]);
+      const encoder = new TextEncoder();
+      const eventData = encoder.encode(serialized);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', eventData);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      event.id = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+      const message = JSON.stringify(['EVENT', event]);
+      console.log(`📡 Sending Bluetooth coordination to ${peerPubkey}:`, coordinationData);
+
+      for (const ws of Array.from(this.websockets.values())) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(message);
+        }
+      }
+
+    } catch (error) {
+      console.error('Failed to send Bluetooth coordination:', error);
+      throw error;
     }
   }
 }
