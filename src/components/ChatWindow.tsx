@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { requestBluetoothPermissions, startBluetoothDiscovery } from '../utils/bitchat';
+import { QRCodePairing } from './QRCodePairing';
 
 interface Message {
   id: string;
@@ -22,6 +23,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
 }) => {
   const [inputText, setInputText] = useState('');
   const [bluetoothEnabled, setBluetoothEnabled] = useState(false);
+  const [showQRPairing, setShowQRPairing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -31,6 +33,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    if (showQRPairing) {
+      console.log('QR pairing panel is now visible');
+    }
+  }, [showQRPairing]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,6 +96,16 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           >
             {bluetoothEnabled ? 'BT ✓' : 'BT'}
           </button>
+                    <button
+            onClick={() => {
+              console.log('QR button clicked, current showQRPairing:', showQRPairing);
+              setShowQRPairing(!showQRPairing);
+            }}
+            className="ml-2 px-2 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+            title="QR Code Pairing"
+          >
+            QR
+          </button>
         </div>
       </div>
       
@@ -125,6 +143,44 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         ))}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* QR Code Pairing */}
+      {showQRPairing && (
+        <div className="p-3 lg:p-6 bg-gray-800/60 backdrop-blur-sm border-t border-gray-700/50">
+          <QRCodePairing
+            deviceInfo={{
+              id: 'current-device',
+              name: 'My BitChat Device',
+              type: 'bluetooth'
+            }}
+            onScanComplete={async (scannedData) => {
+              console.log('Scanned QR code:', scannedData);
+              
+              try {
+                const scannedDevice = scannedData.device;
+                console.log('📱 Scanned device info:', scannedDevice);
+                
+                // For now, show success and log the scanned data
+                // In a full implementation, this would initiate a direct connection
+                // using the device info from the QR code
+                alert(`QR Code scanned successfully!\n\nDevice: ${scannedDevice.name}\nID: ${scannedDevice.id}\n\nThe device information has been captured. In a production app, this would initiate a direct Bluetooth connection to the scanned device.`);
+                
+                // TODO: Implement direct device connection using scanned data
+                // This would involve:
+                // 1. Extracting connection parameters from QR data
+                // 2. Using Web Bluetooth API to connect to the specific device
+                // 3. Establishing BitChat protocol handshake
+                
+              } catch (error) {
+                console.error('Failed to process scanned QR code:', error);
+                alert('Failed to process scanned QR code. Please try again.');
+              }
+              
+              setShowQRPairing(false);
+            }}
+          />
+        </div>
+      )}
 
       {/* Message Input */}
       <form className="p-3 lg:p-6 bg-gray-800/60 backdrop-blur-sm border-t border-gray-700/50" onSubmit={handleSubmit}>

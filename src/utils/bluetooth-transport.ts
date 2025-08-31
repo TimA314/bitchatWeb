@@ -5,6 +5,7 @@
 /// <reference path="../types/bluetooth.d.ts" />
 
 import type { BitChatTransport } from './bitchat-core';
+import { Capacitor } from '@capacitor/core';
 
 // BitChat BLE Service UUID (custom for BitChat protocol)
 const BITCHAT_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
@@ -56,9 +57,14 @@ export class WebBluetoothTransport extends EventTarget implements BitChatTranspo
     }
 
     if (userAgent.includes('Chrome') || userAgent.includes('Edg')) {
+      const isCapacitor = Capacitor.isNativePlatform();
       return {
         supported: this.isSupported(),
-        browser: 'Chrome'
+        browser: isCapacitor ? 'Capacitor (Mobile App)' : 'Chrome',
+        recommendations: isCapacitor ? [
+          'Use QR codes for pairing when Bluetooth auto-discovery fails',
+          'Ensure location permissions are granted for Bluetooth'
+        ] : undefined
       };
     }
 
