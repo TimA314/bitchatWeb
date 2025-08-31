@@ -1,22 +1,24 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { requestBluetoothPermissions, startBluetoothDiscovery } from '../utils/bitchat';
+import React, { useState, useEffect, useRef } from 'react';
 import { QRCodePairing } from './QRCodePairing';
+import { checkBluetoothAvailability } from '../utils/bluetooth';
+import { WebBluetoothTransport } from '../utils/bluetooth-transport';
+import { Toast } from './Toast';
 
 interface Message {
   id: string;
   text: string;
-  timestamp: Date;
   sender: 'user' | 'other';
   senderName: string;
+  timestamp: Date;
 }
 
 interface ChatWindowProps {
   messages: Message[];
-  onSendMessage: (text: string) => void;
+  onSendMessage: (message: string) => void;
   currentUser: string;
 }
 
-export const ChatWindow: React.FC<ChatWindowProps> = ({
+const ChatWindow: React.FC<ChatWindowProps> = ({
   messages,
   onSendMessage,
   currentUser: _currentUser
@@ -24,7 +26,18 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   const [inputText, setInputText] = useState('');
   const [bluetoothEnabled, setBluetoothEnabled] = useState(false);
   const [showQRPairing, setShowQRPairing] = useState(false);
+  const [scannedDeviceData, setScannedDeviceData] = useState<any>(null);
+  const [deviceInfo, setDeviceInfo] = useState<{id: string, name: string, type: 'bluetooth' | 'webrtc'} | null>(null);
+  const [connectedDevices, setConnectedDevices] = useState<Set<string>>(new Set());
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<string>('');
+  const [toast, setToast] = useState<{
+    message: string;
+    type: 'warning' | 'error' | 'success' | 'info';
+    isVisible: boolean;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const bluetoothTransportRef = useRef<WebBluetoothTransport | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -39,6 +52,120 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
       console.log('QR pairing panel is now visible');
     }
   }, [showQRPairing]);
+
+  // Initialize Bluetooth transport
+  useEffect(() => {
+    if (WebBluetoothTransport.isSupported()) {
+      bluetoothTransportRef.current = new WebBluetoothTransport();
+
+      // Initialize the transport
+      bluetoothTransportRef.current.initialize().catch(error => {
+        console.error('Failed to initialize Bluetooth transport:', error);
+      });
+
+      // Set up event listeners for connection events
+      bluetoothTransportRef.current.addEventListener('peerConnected', (event: any) => {
+        const { peer } = event.detail;
+        console.log('🔗 Device connected:', peer);
+        setConnectedDevices(prev => new Set([...prev, peer.fingerprint]));
+        setConnectionStatus(`✅ Connected to ${peer.nickname}`);
+        setIsConnecting(false);
+
+        // Show success toast
+        setToast({
+          message: `🔗 Successfully connected to ${peer.nickname}!`,
+          type: 'success',
+          isVisible: true
+        });
+      });
+
+      bluetoothTransportRef.current.addEventListener('peerDisconnected', (event: any) => {
+        const { peerId } = event.detail;
+        console.log('🔌 Device disconnected:', peerId);
+        setConnectedDevices(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(peerId);
+          return newSet;
+        });
+        setConnectionStatus(`❌ Disconnected from device`);
+
+        // Show info toast
+        setToast({
+          message: '🔌 Device disconnected',
+          type: 'info',
+          isVisible: true
+        });
+      });
+
+      bluetoothTransportRef.current.addEventListener('dataReceived', (event: any) => {
+        const { data, peerId } = event.detail;
+        console.log('📨 Data received from', peerId, ':', data);
+        // Handle incoming messages here
+      });
+
+      bluetoothTransportRef.current.addEventListener('scanComplete', (event: any) => {
+        const { devicesFound, error } = event.detail;
+        console.log('🔍 Scan complete:', { devicesFound, error });
+        if (error) {
+          setConnectionStatus(`❌ Scan failed: ${error}`);
+          setIsConnecting(false);
+        }
+      });
+    }
+
+    return () => {
+      // Cleanup
+      if (bluetoothTransportRef.current) {
+        bluetoothTransportRef.current.removeEventListener('peerConnected', () => {});
+        bluetoothTransportRef.current.removeEventListener('peerDisconnected', () => {});
+        bluetoothTransportRef.current.removeEventListener('dataReceived', () => {});
+        bluetoothTransportRef.current.removeEventListener('scanComplete', () => {});
+      }
+    };
+  }, []);
+
+  // Generate unique device info on component mount
+  useEffect(() => {
+    const generateDeviceInfo = () => {
+      const storedDeviceId = localStorage.getItem('bitchat-device-id');
+      const storedDeviceName = localStorage.getItem('bitchat-device-name');
+
+      let deviceId: string;
+      let deviceName: string;
+
+      if (storedDeviceId && storedDeviceName) {
+        // Use existing device info
+        deviceId = storedDeviceId;
+        deviceName = storedDeviceName;
+      } else {
+        // Generate new unique device info
+        deviceId = `device-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        // Generate a friendly device name with more identifying information
+        const adjectives = ['Blue', 'Red', 'Green', 'Purple', 'Orange', 'Pink', 'Silver', 'Gold', 'Crystal', 'Cosmic', 'Azure', 'Crimson', 'Emerald', 'Amber', 'Ruby', 'Sapphire', 'Diamond', 'Pearl', 'Jade', 'Obsidian'];
+        const nouns = ['Phoenix', 'Dragon', 'Wolf', 'Eagle', 'Tiger', 'Shark', 'Falcon', 'Panther', 'Owl', 'Bear', 'Lion', 'Hawk', 'Raven', 'Fox', 'Lynx', 'Leopard', 'Cheetah', 'Jaguar', 'Wolf', 'Coyote'];
+        const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
+        const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
+        const randomNum = Math.floor(Math.random() * 9999) + 1;
+        const timestamp = Date.now().toString().slice(-4); // Last 4 digits of timestamp
+        deviceName = `${randomAdj} ${randomNoun} ${randomNum}-${timestamp}`;
+
+        // Store in localStorage
+        localStorage.setItem('bitchat-device-id', deviceId);
+        localStorage.setItem('bitchat-device-name', deviceName);
+
+        console.log('🎯 Generated new device identity:', { deviceId, deviceName });
+      }
+
+      setDeviceInfo({
+        id: deviceId,
+        name: deviceName,
+        type: 'bluetooth' as const
+      });
+    };
+
+    generateDeviceInfo();
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,18 +183,116 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   };
 
   const handleEnableBluetooth = async () => {
-    const granted = await requestBluetoothPermissions();
-    setBluetoothEnabled(granted);
-    if (granted) {
-      console.log('Bluetooth enabled for BitChat');
-      // Start discovery after enabling
-      try {
-        await startBluetoothDiscovery();
-      } catch (error) {
-        console.error('Failed to start Bluetooth discovery:', error);
+    try {
+      const result = await checkBluetoothAvailability();
+      setBluetoothEnabled(result.success);
+      if (result.success) {
+        console.log('Bluetooth is available for BitChat');
+        alert('✅ Bluetooth is ready! You can now scan for devices using the 📱 button or by scanning QR codes.');
+      } else {
+        console.warn('Bluetooth not available:', result.message);
+        alert(`❌ Bluetooth Issue: ${result.message}`);
       }
-    } else {
-      console.warn('Bluetooth permission denied');
+    } catch (error) {
+      console.error('Failed to check Bluetooth availability:', error);
+      setBluetoothEnabled(false);
+      alert('❌ Error checking Bluetooth. Please refresh the page and try again.');
+    }
+  };
+
+  // Debug function to list all available Bluetooth devices
+  const debugListDevices = async () => {
+    try {
+      if (!navigator.bluetooth) {
+        throw new Error('Web Bluetooth not supported in this browser');
+      }
+
+      console.log('🔍 Scanning for all available Bluetooth devices...');
+      alert('Opening device picker to see all available devices...\n\nCheck the browser console for detailed device information.');
+
+      const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true
+      });
+
+      console.log('📱 Device selected:', {
+        name: device.name,
+        id: device.id,
+        gatt: device.gatt ? 'GATT available' : 'No GATT'
+      });
+
+      alert(`Device found:\nName: ${device.name || 'Unknown'}\nID: ${device.id}\n\nThis information has been logged to the console for debugging.`);
+
+    } catch (error) {
+      console.error('❌ Failed to list devices:', error);
+      alert('Failed to scan for devices. Make sure Bluetooth is enabled.');
+    }
+  };
+
+  // Function to regenerate device name
+  const regenerateDeviceName = () => {
+    const adjectives = ['Blue', 'Red', 'Green', 'Purple', 'Orange', 'Pink', 'Silver', 'Gold', 'Crystal', 'Cosmic', 'Azure', 'Crimson', 'Emerald', 'Amber', 'Ruby', 'Sapphire', 'Diamond', 'Pearl', 'Jade', 'Obsidian'];
+    const nouns = ['Phoenix', 'Dragon', 'Wolf', 'Eagle', 'Tiger', 'Shark', 'Falcon', 'Panther', 'Owl', 'Bear', 'Lion', 'Hawk', 'Raven', 'Fox', 'Lynx', 'Leopard', 'Cheetah', 'Jaguar', 'Wolf', 'Coyote'];
+    const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
+    const randomNum = Math.floor(Math.random() * 9999) + 1;
+    const timestamp = Date.now().toString().slice(-4); // Last 4 digits of timestamp
+    const newDeviceName = `${randomAdj} ${randomNoun} ${randomNum}-${timestamp}`;
+
+    // Update localStorage
+    localStorage.setItem('bitchat-device-name', newDeviceName);
+
+    // Update state
+    if (deviceInfo) {
+      setDeviceInfo({
+        ...deviceInfo,
+        name: newDeviceName
+      });
+    }
+
+    console.log('🔄 Regenerated device name:', newDeviceName);
+    alert(`Device name updated to: ${newDeviceName}`);
+  };
+
+  // Function to close toast
+  const closeToast = () => {
+    setToast(null);
+  };
+
+  // Function to connect to a scanned device
+  const connectToScannedDevice = async () => {
+    if (!scannedDeviceData || !bluetoothTransportRef.current) {
+      alert('❌ No device data available or Bluetooth transport not initialized');
+      return;
+    }
+
+    setIsConnecting(true);
+    setConnectionStatus('🔗 Connecting...');
+
+    try {
+      console.log('🔗 Attempting to connect to scanned device:', scannedDeviceData.device);
+
+      // Initialize the transport if not already done
+      if (!bluetoothTransportRef.current) {
+        bluetoothTransportRef.current = new WebBluetoothTransport();
+      }
+
+      // Use the transport's discovery method which handles device selection and connection
+      await bluetoothTransportRef.current.discoverPeersWithDialog();
+
+      setConnectionStatus('✅ Connection successful!');
+      alert(`✅ Successfully connected to ${scannedDeviceData.device.name}!`);
+
+    } catch (error) {
+      console.error('❌ Failed to connect to device:', error);
+      setConnectionStatus('❌ Connection failed');
+      setIsConnecting(false);
+
+      let errorMessage = 'Failed to connect to device';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+
+      alert(`❌ Connection failed: ${errorMessage}\n\nMake sure:\n1. The device is nearby and Bluetooth is enabled\n2. The device is discoverable\n3. You have granted Bluetooth permissions`);
     }
   };
 
@@ -76,166 +301,245 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
       {/* Header */}
       <div className="flex justify-between items-center p-4 lg:p-6 bg-gradient-to-r from-primary-600 to-primary-700 border-b border-gray-700/50">
         <div className="flex items-center space-x-3">
-          <div className="w-6 h-6 lg:w-8 lg:h-8 bg-primary-400 rounded-full flex items-center justify-center">
-            <span className="text-white font-bold text-xs lg:text-sm">BC</span>
+          <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+            <span className="text-white font-bold text-lg">B</span>
           </div>
-          <h2 className="text-lg lg:text-xl font-bold text-white">BitChat</h2>
+          <div>
+            <h1 className="text-white font-bold text-xl">BitChat</h1>
+            <p className="text-white/70 text-sm">
+              {deviceInfo ? `Device: ${deviceInfo.name}` : 'Loading device info...'}
+            </p>
+            {deviceInfo && (
+              <div className="flex items-center space-x-2 mt-1">
+                <div className="w-6 h-6 bg-white/20 rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-xs">
+                    {deviceInfo.name.charAt(0).toUpperCase()}
+                  </span>
+                </div>
+                <p className="text-white/80 text-xs font-mono">
+                  ID: {deviceInfo.id.slice(0, 8)}...
+                </p>
+              </div>
+            )}
+            {connectionStatus && (
+              <p className="text-white/80 text-xs mt-1">{connectionStatus}</p>
+            )}
+            {connectedDevices.size > 0 && (
+              <p className="text-green-300 text-xs mt-1">
+                🔗 Connected to {connectedDevices.size} device{connectedDevices.size !== 1 ? 's' : ''}
+              </p>
+            )}
+          </div>
         </div>
-        <div className="flex items-center space-x-2 text-xs lg:text-sm text-primary-100">
-          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-          <span className="font-medium hidden sm:inline">Online</span>
-          <span className="font-medium sm:hidden">●</span>
+
+        <div className="flex items-center space-x-2">
+          {/* Regenerate Device Name Button */}
+          <button
+            onClick={regenerateDeviceName}
+            className="bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg transition-colors text-sm"
+            title="Generate a new device name"
+          >
+            🔄
+          </button>
+
+          {/* Bluetooth Status */}
           <button
             onClick={handleEnableBluetooth}
-            className={`ml-2 px-2 py-1 text-xs rounded-lg transition-colors ${
+            className={`px-3 py-2 rounded-lg transition-colors text-sm ${
               bluetoothEnabled
-                ? 'bg-green-600 text-white'
-                : 'bg-blue-600 hover:bg-blue-700 text-white'
+                ? 'bg-green-600 hover:bg-green-700 text-white'
+                : 'bg-gray-600 hover:bg-gray-700 text-white'
             }`}
-            title={bluetoothEnabled ? 'Bluetooth enabled' : 'Enable Bluetooth for offline messaging'}
+            title={bluetoothEnabled ? 'Bluetooth Ready' : 'Check Bluetooth Status'}
           >
-            {bluetoothEnabled ? 'BT ✓' : 'BT'}
+            📱
           </button>
-                    <button
-            onClick={() => {
-              console.log('QR button clicked, current showQRPairing:', showQRPairing);
-              setShowQRPairing(!showQRPairing);
-            }}
-            className="ml-2 px-2 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
-            title="QR Code Pairing"
+
+          {/* QR Pairing Toggle */}
+          <button
+            onClick={() => setShowQRPairing(!showQRPairing)}
+            className={`px-3 py-2 rounded-lg transition-colors text-sm ${
+              showQRPairing
+                ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                : 'bg-gray-600 hover:bg-gray-700 text-white'
+            }`}
+            title={showQRPairing ? 'Hide QR Pairing' : 'Show QR Pairing'}
           >
-            QR
+            📷
           </button>
+
+          {/* Debug Device List */}
+          <button
+            onClick={debugListDevices}
+            className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg transition-colors text-sm"
+            title="Debug: List all Bluetooth devices"
+          >
+            🔍
+          </button>
+
+          {/* Disconnect All Button */}
+          {connectedDevices.size > 0 && (
+            <button
+              onClick={() => {
+                if (bluetoothTransportRef.current) {
+                  // Note: We'd need to add a disconnectAll method to the transport
+                  alert('Disconnect functionality will be implemented');
+                }
+              }}
+              className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg transition-colors text-sm"
+              title="Disconnect from all devices"
+            >
+              ❌
+            </button>
+          )}
         </div>
       </div>
-      
-      {/* Messages */}
-      <div className="flex-1 p-3 lg:p-6 overflow-y-auto bg-gradient-to-b from-gray-800/50 to-gray-900/50 space-y-3 lg:space-y-6">
+
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4">
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`flex max-w-[85%] sm:max-w-[80%] ${message.sender === 'user' ? 'self-end' : 'self-start'} animate-fade-in`}
+            className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
           >
-            <div className={`group relative rounded-2xl p-3 lg:p-4 shadow-lg backdrop-blur-sm transition-all duration-200 hover:shadow-xl ${
-              message.sender === 'user' 
-                ? 'bg-gradient-to-br from-primary-500 to-primary-600 text-white ml-auto' 
-                : 'bg-gray-700/80 border border-gray-600/50 text-gray-100'
-            }`}>
-              <div className="flex justify-between items-center mb-1 lg:mb-2 text-xs opacity-80">
-                <span className="font-semibold truncate max-w-[120px] sm:max-w-none">{message.senderName}</span>
-                <span className="text-xs ml-2 flex-shrink-0">
-                  {message.timestamp.toLocaleTimeString([], { 
-                    hour: '2-digit', 
-                    minute: '2-digit' 
-                  })}
-                </span>
+            <div
+              className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                message.sender === 'user'
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-gray-700 text-white'
+              }`}
+            >
+              <div className="text-xs text-gray-300 mb-1">{message.senderName}</div>
+              <div>{message.text}</div>
+              <div className="text-xs text-gray-400 mt-1">
+                {message.timestamp.toLocaleTimeString()}
               </div>
-              <div className="leading-relaxed break-words text-sm lg:text-base">{message.text}</div>
-              
-              {/* Message tail */}
-              <div className={`absolute top-3 lg:top-4 ${
-                message.sender === 'user' 
-                  ? '-right-1 w-0 h-0 border-l-[6px] border-l-primary-500 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent' 
-                  : '-left-1 w-0 h-0 border-r-[6px] border-r-gray-700 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent'
-              }`}></div>
             </div>
           </div>
         ))}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* QR Code Pairing */}
+      {/* Input Area */}
+      <div className="p-4 lg:p-6 border-t border-gray-700/50 bg-gray-800/60 backdrop-blur-sm">
+        <form onSubmit={handleSubmit} className="flex space-x-2">
+          <input
+            type="text"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="Type your message..."
+            className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:outline-none focus:border-primary-500"
+          />
+          <button
+            type="submit"
+            className="px-6 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
+          >
+            Send
+          </button>
+        </form>
+      </div>
+
+      {/* QR Pairing Panel */}
       {showQRPairing && (
         <div className="p-3 lg:p-6 bg-gray-800/60 backdrop-blur-sm border-t border-gray-700/50">
           <QRCodePairing
-            deviceInfo={{
+            deviceInfo={deviceInfo || {
               id: 'current-device',
-              name: 'My BitChat Device',
-              type: 'bluetooth'
+              name: 'Loading...',
+              type: 'bluetooth' as const
             }}
-            onScanComplete={async (scannedData) => {
+            onScanComplete={async (scannedData: any) => {
               console.log('Scanned QR code:', scannedData);
-              
-              try {
-                const scannedDevice = scannedData.device;
-                console.log('📱 Scanned device info:', scannedDevice);
-                
-                // For now, show success and log the scanned data
-                // In a full implementation, this would initiate a direct connection
-                // using the device info from the QR code
-                alert(`QR Code scanned successfully!\n\nDevice: ${scannedDevice.name}\nID: ${scannedDevice.id}\n\nThe device information has been captured. In a production app, this would initiate a direct Bluetooth connection to the scanned device.`);
-                
-                // TODO: Implement direct device connection using scanned data
-                // This would involve:
-                // 1. Extracting connection parameters from QR data
-                // 2. Using Web Bluetooth API to connect to the specific device
-                // 3. Establishing BitChat protocol handshake
-                
-              } catch (error) {
-                console.error('Failed to process scanned QR code:', error);
-                alert('Failed to process scanned QR code. Please try again.');
-              }
-              
-              setShowQRPairing(false);
+
+              const scannedDevice = scannedData.device;
+              console.log('📱 Scanned device info:', scannedDevice);
+
+              // Store scanned data for connection
+              setScannedDeviceData(scannedData);
+
+              // Show success toast
+              setToast({
+                message: `🎯 Device "${scannedDevice.name}" successfully scanned!`,
+                type: 'success',
+                isVisible: true
+              });
+
+              // Show success message
+              alert(`QR Code scanned successfully!\n\nDevice: ${scannedDevice.name}\nID: ${scannedDevice.id}\n\nClick "Connect to Device" to establish the connection.`);
             }}
           />
+
+          {/* Connect to Scanned Device Button */}
+          {scannedDeviceData && (
+            <div className="mt-4 p-4 bg-green-900/30 border border-green-500/50 rounded-lg">
+              <div className="flex items-center space-x-3 mb-3">
+                <div className="w-12 h-12 bg-green-600 rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-lg">✓</span>
+                </div>
+                <div className="flex-1">
+                  <h4 className="text-white font-bold text-lg flex items-center">
+                    <span className="mr-2">🎯</span>
+                    {scannedDeviceData.device.name}
+                  </h4>
+                  <p className="text-gray-300 text-sm">
+                    {scannedDeviceData.device.type === 'bluetooth' ? '📱' : '🌐'} {scannedDeviceData.device.type.toUpperCase()} Device
+                  </p>
+                  <p className="text-gray-400 text-xs font-mono">
+                    ID: {scannedDeviceData.device.id.slice(0, 12)}...
+                  </p>
+                </div>
+              </div>
+
+              {connectionStatus && (
+                <div className="mb-3 p-2 bg-gray-700/50 rounded text-sm">
+                  <p className="text-gray-200">{connectionStatus}</p>
+                </div>
+              )}
+
+              <div className="flex space-x-2">
+                <button
+                  onClick={connectToScannedDevice}
+                  disabled={isConnecting}
+                  className={`flex-1 px-4 py-3 rounded-lg transition-colors font-semibold ${
+                    isConnecting
+                      ? 'bg-gray-600 cursor-not-allowed text-gray-400'
+                      : 'bg-green-600 hover:bg-green-700 text-white shadow-lg'
+                  }`}
+                >
+                  {isConnecting ? '🔗 Connecting...' : '🔗 Connect to Device'}
+                </button>
+                <button
+                  onClick={() => setScannedDeviceData(null)}
+                  className="px-4 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors"
+                  title="Scan a different device"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="mt-3 text-xs text-gray-400">
+                <p>✅ <strong>Device successfully scanned!</strong></p>
+                <p>Ready to connect to <strong>{scannedDeviceData.device.name}</strong></p>
+                <p>Make sure both devices have Bluetooth enabled</p>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Message Input */}
-      <form className="p-3 lg:p-6 bg-gray-800/60 backdrop-blur-sm border-t border-gray-700/50" onSubmit={handleSubmit}>
-        <div className="flex space-x-2 lg:space-x-4 items-center">
-
-          <div className="flex-1">
-            <textarea
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              id='message-input'
-              onKeyUp={handleKeyPress}
-              placeholder="Type your message..."
-              className="
-                w-full 
-                h-full 
-                p-3 
-                lg:p-4 
-                bg-gray-700/60 
-                border 
-                border-gray-600/50 
-                rounded-2xl 
-                resize-none 
-                outline-none 
-                transition-all 
-                duration-200 
-                focus:border-primary-500 
-                focus:ring-2 
-                focus:ring-primary-500/20 
-                focus:bg-gray-700/80 
-                text-white 
-                placeholder-gray-400 
-                min-h-[48px] 
-                text-sm 
-                lg:text-base"
-              rows={1}
-            />
-          </div>
-
-            <button
-            type="submit"
-            className={`px-4 lg:px-6 py-3 lg:py-4 rounded-2xl font-semibold transition-all duration-200 h-full text-sm lg:text-base ${
-              inputText.trim()
-              ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 hover:shadow-lg hover:scale-105 active:scale-95'
-              : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
-            }`}
-            disabled={!inputText.trim()}
-            >
-            <span className="hidden sm:inline">Send</span>
-            <svg className="sm:hidden w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-            </svg>
-            </button>
-          
-        </div>
-      </form>
+      {/* Toast Notifications */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          isVisible={toast.isVisible}
+          onClose={closeToast}
+          duration={4000}
+        />
+      )}
     </div>
   );
 };
+
+export default ChatWindow;

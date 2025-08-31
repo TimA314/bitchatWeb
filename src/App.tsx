@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import './App.css';
-import { ChatWindow } from './components/ChatWindow';
+import ChatWindow from './components/ChatWindow';
 import { MeshNetworkPanel } from './components/MeshNetworkPanel';
 import { UserProfile } from './components/UserProfile';
 import { MobileNav } from './components/MobileNav';

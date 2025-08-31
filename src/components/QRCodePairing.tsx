@@ -212,9 +212,23 @@ export const QRCodePairing: React.FC<QRCodePairingProps> = ({
             </div>
           )}
         </div>
-        <p className="text-xs text-gray-400 mt-2">
-          Device: {deviceInfo.name} ({deviceInfo.type})
-        </p>
+
+        {/* Device Info Display */}
+        <div className="mt-3 p-3 bg-gray-700/50 rounded-lg">
+          <h5 className="text-sm text-white font-semibold mb-2">📱 Your Device Info:</h5>
+          <div className="space-y-1">
+            <p className="text-white text-sm">
+              <strong>Name:</strong> {deviceInfo.name}
+            </p>
+            <p className="text-gray-300 text-sm">
+              <strong>Type:</strong> {deviceInfo.type.toUpperCase()}
+            </p>
+            <p className="text-gray-400 text-xs font-mono">
+              <strong>ID:</strong> {deviceInfo.id}
+            </p>
+          </div>
+        </div>
+
         {qrValue && (
           <details className="mt-2">
             <summary className="text-xs text-gray-500 cursor-pointer">Debug: QR Data</summary>

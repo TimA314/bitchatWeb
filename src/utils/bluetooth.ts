@@ -305,6 +305,71 @@ export const isBluetoothReady = async (): Promise<boolean> => {
   }
 };
 
+export const checkBluetoothAvailability = async (): Promise<{
+  success: boolean;
+  message: string;
+}> => {
+  try {
+    // Check if Bluetooth is available first
+    if (!navigator.bluetooth) {
+      return {
+        success: false,
+        message: "Bluetooth is not supported on this browser."
+      };
+    }
+
+    const browserInfo = getBrowserInfo();
+
+    // For Brave, provide specific instructions
+    if (browserInfo.isBrave) {
+      try {
+        // First check availability
+        const isAvailable = await navigator.bluetooth.getAvailability();
+        if (!isAvailable) {
+          return {
+            success: false,
+            message: "🔌 Bluetooth is not available. Enable Bluetooth in your system settings and refresh the page."
+          };
+        }
+      } catch (error) {
+        return {
+          success: false,
+          message: "🔧 Bluetooth access is restricted in Brave. Go to brave://settings/privacy and enable 'Web Bluetooth API'."
+        };
+      }
+    }
+
+    // Just check if Bluetooth is available, don't request devices yet
+    try {
+      const isAvailable = await navigator.bluetooth.getAvailability();
+      if (isAvailable) {
+        return {
+          success: true,
+          message: "Bluetooth is available and ready to use."
+        };
+      } else {
+        return {
+          success: false,
+          message: "Bluetooth is not available. Please enable Bluetooth in your device settings."
+        };
+      }
+    } catch (error) {
+      // Fallback for browsers that don't support getAvailability
+      return {
+        success: true,
+        message: "Bluetooth appears to be supported. You can try scanning for devices."
+      };
+    }
+
+  } catch (error) {
+    console.error('Error checking Bluetooth availability:', error);
+    return {
+      success: false,
+      message: "Error checking Bluetooth availability. Please try refreshing the page."
+    };
+  }
+};
+
 export const requestBluetoothPermission = async (): Promise<{
   success: boolean;
   message: string;
